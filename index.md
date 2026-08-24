@@ -5,74 +5,68 @@ title: Weston T. Nyabeze — Business Analytics & AI
 
 # My Business Analytics Portfolio
 
-Analytics, financial systems, and automation. A running account of what I've built
-and shipped, most recent first.
-
 ### Learn About My Projects
 
 #### [Khaziq](https://github.com/weston-nyabeze)
 
-*Next.js · Node.js/Express · Supabase · Tailwind*
-
-A services marketplace connecting the Zimbabwean diaspora with vetted local providers
-across 14 service categories — built to solve a problem I'd watched friends and family
-run into for years: paying for real work to get done back home, with no reliable way to
-verify it happened.
+I built a services marketplace connecting the Zimbabwean diaspora with vetted local providers
+across 14 service categories, using **Next.js**, **Node.js/Express**, **Supabase**, and **Tailwind**.
+It solves a problem I'd watched friends and family run into for years: paying for real work to get
+done back home, with no reliable way to verify it happened.
 
 #### [The Ledger](https://github.com/weston-nyabeze)
 
-*Next.js · TypeScript · Prisma · Tailwind*
+I used **Next.js**, **TypeScript**, and **Prisma** to build a habit and schedule tracker organised
+around identity-based habits, with a drag-and-drop weekly planner, category-scored task tracking,
+and an AI-generated weekly reflection report. Built end to end with Claude Code.
 
-A personal habit and schedule tracker built around identity-based habits, with a
-drag-and-drop weekly planner, category-scored task tracking, and an AI-generated weekly
-reflection report. Built end to end with Claude Code.
+#### Outcomes Automation with n8n
 
-#### Outcomes Automation — Kogod Career Development
+I built six **n8n** workflows automating graduate outcomes collection and verification for the
+Kogod Career Development center, cutting roughly 8 hours of weekly manual entry and lifting data
+completeness by 35%. I also built AI workflows analysing 500+ LinkedIn profiles for a longitudinal
+alumni outcomes study, presented to Kogod leadership.
 
-*n8n · 12Twenty · LinkedIn data*
+#### Financial Forecasting with Board EPM
 
-Six n8n workflows automating graduate outcomes collection and verification, cutting
-roughly 8 hours of weekly manual entry and lifting data completeness by 35%. Also built
-AI workflows analyzing 500+ LinkedIn profiles for a longitudinal alumni outcomes study,
-presented to Kogod leadership.
+I designed and configured four end-to-end budgeting and forecasting models for three client
+organisations at 263Hub Premier Outsourcing, integrating five-plus source systems and training
+12 end users to 95% adoption within a month.
 
-#### Board EPM Financial Models
+#### Research Automation with Python and R
 
-*Board EPM · Financial planning & forecasting*
+I used **Python**, **R**, and **Relevance AI** to clean and analyse datasets from five-plus sources
+across 10,000+ records for faculty research, and deployed no-code AI agents to automate exploration
+and summarisation — cutting pattern-detection turnaround from 3 days to under 1.
 
-Designed and configured four end-to-end budgeting and forecasting models for three client
-organizations at 263Hub Premier Outsourcing, integrating five-plus source systems and
-training 12 end users to 95% adoption within a month.
+#### Project Six — placeholder
 
-#### Graduate Research Automation
+Short description of the project goes here: what you used, what data, and what insight it produced.
 
-*Python · R · Excel · Relevance AI*
+#### Project Seven — placeholder
 
-Cleaned and analyzed datasets from five-plus sources across 10,000+ records for faculty
-research, and deployed no-code AI agents to automate exploration and summarization —
-cutting pattern-detection turnaround from 3 days to under 1.
+Short description of the project goes here: what you used, what data, and what insight it produced.
+
+### My Projects
+
+[Khaziq](https://github.com/weston-nyabeze)
+
+[The Ledger](https://github.com/weston-nyabeze)
+
+[Outcomes Automation with n8n](#outcomes-automation-with-n8n)
+
+[Financial Forecasting with Board EPM](#financial-forecasting-with-board-epm)
+
+[Research Automation with Python and R](#research-automation-with-python-and-r)
 
 ### Resume
 
-[Read my resume]({{ '/resume.html' | relative_url }}) — a full statement of work, laid out
-as a ledger. Or [download the PDF]({{ '/files/Weston_Nyabeze_Resume.pdf' | relative_url }}).
+[Read my resume]({{ '/resume.html' | relative_url }}) · [Download the PDF]({{ '/files/Weston_Nyabeze_Resume.pdf' | relative_url }})
 
-### Education
+### LinkedIn
 
-**MS, Business Analytics and AI** — Kogod School of Business, American University,
-Washington, DC. GPA 3.76, expected May 2027.
+[View My LinkedIn Profile](https://www.linkedin.com/in/weston-t-nyabeze)
 
-**BS, Applied Mathematics with Economics** — University of Zimbabwe, Harare.
-Minor in Economics & Statistics. GPA 3.50, October 2023.
+### GitHub
 
-### Skills
-
-**Languages & tools** — Python, R, SQL, Excel, Power BI, Tableau, Board EPM
-
-**AI & automation** — AI agents, n8n, Relevance AI, Microsoft Copilot, Claude Code
-
-**Analytics** — Data wrangling, exploratory analysis, visualization, machine learning
-
-### Contact
-
-[wn8924a@american.edu](mailto:wn8924a@american.edu) · (240) 353-9754
+[View My GitHub Profile](https://github.com/weston-nyabeze)
