@@ -1,4 +1,4 @@
-# The Empty Chair — Predicting and Pricing Patient No-Shows
+# Predicting and Pricing Patient No-Shows
 
 An end-to-end analysis of appointment no-shows across five UK private clinics: what they
 cost, what actually drives them, and which interventions pay for themselves.
