@@ -12,7 +12,7 @@ existing `weston-nyabeze.github.io` repo:
    git commit -m "New portfolio design"
    git push origin main
    ```
-3. GitHub Pages will rebuild automatically — check
+3. GitHub Pages will rebuild automatically, check
    `https://weston-nyabeze.github.io` in a minute or two.
 
 ## What to customize next
