@@ -1,0 +1,1047 @@
+---
+title: "The Empty Chair"
+subtitle: "Quantifying and Reducing the Cost of Patient No-Shows Across a UK Private Clinic Network"
+author: "Weston Nyabeze | MS Business Analytics and AI, Kogod School of Business, American University"
+abstract: |
+  A ten-page executive edition of the full technical no-show analysis. It states the size of the
+  loss, the three operational factors that drive it, how the predictive model was built and
+  validated, and a costed four-part action plan. The full technical report, with the complete data
+  audit, four-model bake-off and 41 supporting exhibits, is the companion document to this one.
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 2
+    toc-title: "Contents"
+    toc-location: left
+    number-sections: false
+    fig-width: 8.5
+    fig-height: 4.6
+    fig-align: center
+    fig-cap-location: bottom
+    tbl-cap-location: top
+    code-fold: true
+    code-summary: "Show the code behind this exhibit"
+    code-tools: true
+    code-overflow: wrap
+    smooth-scroll: true
+    anchor-sections: true
+    link-external-newwindow: true
+    embed-resources: true
+    css: styles.css
+    include-in-header:
+      text: |
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  docx:
+    toc: false
+    fig-width: 6.6
+    fig-height: 3.7
+    fig-align: center
+    fig-cap-location: bottom
+execute:
+  warning: false
+  message: false
+  echo: true
+  cache: false
+knitr:
+  opts_chunk:
+    dev: "png"
+    dpi: 200
+    fig.retina: 2
+editor: source
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# ---------------------------------------------------------------------------
+# 0. ENVIRONMENT
+# ---------------------------------------------------------------------------
+required <- c("data.table", "ggplot2", "scales", "glmnet", "ranger", "pROC",
+              "knitr", "kableExtra", "patchwork", "plotly", "htmltools")
+missing_pkgs <- required[!sapply(required, requireNamespace, quietly = TRUE)]
+if (length(missing_pkgs)) {
+  stop("Install the following packages before rendering: ",
+       paste(missing_pkgs, collapse = ", "))
+}
+
+suppressPackageStartupMessages({
+  library(data.table); library(ggplot2); library(scales)
+  library(glmnet);     library(ranger);  library(pROC)
+  library(knitr);      library(kableExtra)
+  library(patchwork);  library(plotly);  library(htmltools)
+})
+
+SEED <- 1234568                          # one seed governs every stochastic step
+set.seed(SEED)                           # change it here and the whole report follows
+options(scipen = 999, digits = 4)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+if (!grepl("utf-?8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) {
+  for (loc in c("C.UTF-8", "en_US.UTF-8", "en_GB.UTF-8")) {
+    if (!inherits(try(Sys.setlocale("LC_CTYPE", loc), silent = TRUE), "try-error") &&
+        grepl("utf-?8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) break
+  }
+}
+IS_HTML <- knitr::is_html_output()       # plotly only exists in the HTML build
+
+HAS_XGB <- requireNamespace("xgboost", quietly = TRUE)
+HAS_GBM <- requireNamespace("gbm",     quietly = TRUE)
+if (HAS_XGB) suppressPackageStartupMessages(library(xgboost))
+if (!HAS_XGB && HAS_GBM) suppressPackageStartupMessages(library(gbm))
+BOOST_ENGINE <- if (HAS_XGB) "XGBoost" else if (HAS_GBM) "GBM" else NA_character_
+
+# ---------------------------------------------------------------------------
+# 1. DESIGN SYSTEM
+# ---------------------------------------------------------------------------
+pal <- list(
+  ink       = "#0d2438", ink_soft = "#1b3a55",
+  text      = "#10161c", text2    = "#4b5560", muted = "#78838f",
+  rule      = "#dcdfda", surface  = "#fcfcfb", surface2 = "#f4f5f3",
+  s1 = "#2a78d6", s2 = "#eb6834", s3 = "#1baf7a", s4 = "#eda100", s5 = "#4a3aa7",
+  good = "#1baf7a", warn = "#eda100", serious = "#eb6834", critical = "#c0392b",
+  seq = c("#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b")
+)
+cat_pal <- unname(unlist(pal[c("s1", "s2", "s3", "s4", "s5")]))
+
+theme_clinic <- function(base_size = 12, grid = "y") {
+  th <- theme_minimal(base_size = base_size) +
+    theme(
+      text             = element_text(colour = pal$text),
+      plot.title       = element_text(face = "bold", size = base_size * 1.14,
+                                      colour = pal$ink, margin = margin(b = 3)),
+      plot.subtitle    = element_text(size = base_size * 0.92, colour = pal$text2,
+                                      margin = margin(b = 13), lineheight = 1.15),
+      plot.caption     = element_text(size = base_size * 0.75, colour = pal$muted,
+                                      hjust = 0, margin = margin(t = 12), lineheight = 1.2),
+      plot.title.position  = "plot",
+      plot.caption.position = "plot",
+      axis.title       = element_text(size = base_size * 0.82, colour = pal$text2),
+      axis.title.x     = element_text(margin = margin(t = 8)),
+      axis.title.y     = element_text(margin = margin(r = 8)),
+      axis.text        = element_text(size = base_size * 0.82, colour = pal$text2),
+      axis.line.x      = element_line(colour = pal$ink, linewidth = 0.45),
+      axis.ticks.x     = element_line(colour = pal$ink, linewidth = 0.35),
+      axis.ticks.length = unit(2.5, "pt"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(colour = pal$rule, linewidth = 0.4),
+      legend.position  = "top",
+      legend.justification = "left",
+      legend.title     = element_text(size = base_size * 0.80, colour = pal$text2),
+      legend.text      = element_text(size = base_size * 0.80, colour = pal$text2),
+      legend.key.height = unit(10, "pt"),
+      legend.margin    = margin(b = 2),
+      strip.text       = element_text(face = "bold", size = base_size * 0.85,
+                                      colour = pal$ink, hjust = 0,
+                                      margin = margin(b = 5, t = 3)),
+      plot.background  = element_rect(fill = pal$surface, colour = NA),
+      panel.background = element_rect(fill = pal$surface, colour = NA),
+      plot.margin      = margin(6, 10, 6, 6)
+    )
+  if (grid == "x") th <- th + theme(panel.grid.major.y = element_blank(),
+                                    panel.grid.major.x = element_line(colour = pal$rule, linewidth = 0.4),
+                                    axis.line.x = element_blank(), axis.ticks.x = element_blank(),
+                                    axis.line.y = element_line(colour = pal$ink, linewidth = 0.45))
+  if (grid == "none") th <- th + theme(panel.grid.major.y = element_blank())
+  th
+}
+theme_set(theme_clinic())
+update_geom_defaults("col",   list(fill = pal$s1))
+update_geom_defaults("line",  list(colour = pal$s1, linewidth = 0.75))
+update_geom_defaults("point", list(colour = pal$s1, size = 2.1))
+update_geom_defaults("text",  list(family = "", colour = pal$text2, size = 3.0))
+
+# ---------------------------------------------------------------------------
+# 2. FORMATTING HELPERS
+# ---------------------------------------------------------------------------
+gbp   <- function(x, d = 0) paste0("\u00a3", formatC(x, format = "f", big.mark = ",", digits = d))
+gbp_k <- function(x)        paste0("\u00a3", formatC(x / 1000, format = "f", digits = 1), "k")
+pc    <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), "%")
+pp    <- function(x, d = 1) paste0(formatC(100 * x, format = "f", digits = d), " pp")
+num   <- function(x, d = 0) formatC(x, format = "f", big.mark = ",", digits = d)
+
+tbl <- function(x, caption = NULL, ...) {
+  k <- knitr::kable(x, caption = caption, booktabs = TRUE, ...)
+  if (IS_HTML) {
+    k <- kableExtra::kable_styling(
+      k, bootstrap_options = c("hover", "condensed"),
+      full_width = TRUE, position = "left", font_size = 13.5)
+  }
+  k
+}
+
+show_interactive <- function(p, tooltip = c("x", "y"), legend = FALSE) {
+  ttl <- p$labels$title; sub <- p$labels$subtitle; cap <- p$labels$caption
+  g <- plotly::ggplotly(p + labs(title = NULL, subtitle = NULL, caption = NULL),
+                        tooltip = tooltip)
+  plotly::layout(
+    g,
+    showlegend = legend,
+    title = list(
+      text = paste0("<b>", ttl, "</b>",
+                    if (!is.null(sub)) paste0("<br><sup style='color:#4b5560'>", sub, "</sup>") else ""),
+      x = 0, xanchor = "left", font = list(size = 15, color = "#0d2438")),
+    margin = list(t = 76, l = 8, r = 8, b = 52),
+    hoverlabel = list(bgcolor = "#0d2438", font = list(color = "white", size = 11)),
+    plot_bgcolor = "#fcfcfb", paper_bgcolor = "#fcfcfb"
+  ) |> plotly::config(displayModeBar = FALSE, responsive = TRUE)
+}
+
+wilson <- function(k, n, conf = 0.95) {
+  z <- qnorm(1 - (1 - conf) / 2); p <- k / n
+  d <- 1 + z^2 / n
+  c(lo = (p + z^2 / (2 * n) - z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2))) / d,
+    hi = (p + z^2 / (2 * n) + z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2))) / d)
+}
+rate_ci <- function(dt, by) {
+  out <- dt[, .(n = .N, k = sum(no_show)), by = by]
+  ci  <- t(mapply(wilson, out$k, out$n))
+  out[, `:=`(rate = k / n, lo = ci[, 1], hi = ci[, 2])][]
+}
+```
+
+```{r}
+#| label: ingest
+#| include: false
+
+data_path <- "C:/Users/nyabe/OneDrive - american.edu/Desktop/Github/Project_5/uk_private_clinic_no_show_2026.csv"
+if (!file.exists(data_path)) data_path <- "uk_private_clinic_no_show_2026.csv"
+stopifnot(file.exists(data_path))
+
+raw <- data.table::fread(data_path)
+
+N_APPT    <- nrow(raw)
+N_PATIENT <- uniqueN(raw$patient_id)
+N_CLINIC  <- uniqueN(raw$clinic_id)
+BASE_RATE <- mean(raw$no_show)
+```
+
+## Executive summary {.unnumbered}
+
+```{r}
+#| label: kpi-headline
+#| echo: false
+
+gross_loss  <- sum(raw$estimated_revenue_loss_gbp)
+idle_cost   <- sum(raw$staff_idle_cost_gbp)
+gross_expo  <- gross_loss + idle_cost
+rebook_rate <- mean(raw[no_show == 1]$slot_rebooked_flag)
+recovered   <- sum(raw[no_show == 1 & slot_rebooked_flag == 1]$estimated_revenue_loss_gbp)
+net_loss    <- gross_expo - recovered
+loss_per_appt <- net_loss / N_APPT
+
+kpis <- data.frame(
+  label = c("Appointments analysed", "No-show rate", "Gross economic exposure",
+            "Slots recovered by rebooking", "Net economic loss", "Net loss per appointment booked"),
+  value = c(num(N_APPT), pc(BASE_RATE), gbp(gross_expo),
+            pc(rebook_rate), gbp(net_loss), gbp(loss_per_appt, 2)),
+  note  = c(paste0(num(N_PATIENT), " patients across ", N_CLINIC, " sites"),
+            paste0("1 in every ", formatC(1 / BASE_RATE, digits = 1, format = "f"), " appointments"),
+            paste0("fees ", gbp(gross_loss), " plus idle staff ", gbp(idle_cost)),
+            paste0(num(sum(raw$slot_rebooked_flag)), " of ", num(sum(raw$no_show)), " missed slots refilled"),
+            "gross exposure net of rebooking recovery",
+            "the figure that belongs in the operating budget"),
+  tone  = c("neutral", "critical", "serious", "good", "critical", "serious"),
+  stringsAsFactors = FALSE
+)
+
+# A three-column layout with one very short numeric column squeezed between two
+# long text columns causes Word's table auto-fit to wrap the number itself
+# mid-digit, and it is simplest to use one consistent table in both formats
+# rather than a custom HTML tile layout that depends on the stylesheet loading.
+kpis_tbl <- data.frame(Measure = kpis$label,
+                       Detail = paste0("**", kpis$value, "** : ", kpis$note))
+tbl(kpis_tbl, caption = "Exhibit 1. Headline measures, FY2026 booking year",
+    col.names = c("Measure", "Value and basis"))
+```
+
+This report answers one question for the clinic network's leadership: **why are appointments being
+missed, and what is it worth to fix that?** A five-site network booked `r num(N_APPT)` appointments in
+the year covered by this extract, and `r pc(BASE_RATE)` of them, one in every
+`r formatC(1 / BASE_RATE, digits = 1, format = "f")`, went unattended. After crediting back the slots
+that were successfully rebooked, that leaves `r gbp(net_loss)` of real economic loss a year, or
+`r gbp(loss_per_appt, 2)` on every single appointment the network takes.
+
+No-show risk here is driven by three things the clinic already controls: **how far ahead an
+appointment is booked**, **how the reminder programme is run**, and **whether a cancelled slot is
+released back into the booking system**. It is not driven by who the patient is: age, gender, clinic
+site and day of week make essentially no difference. A predictive model built from the operational
+factors ranks appointments by risk well enough to make a targeted call programme profitable, and a
+costed four-part action plan below recovers a substantial share of the loss, most of it starting next
+quarter with no pilot required.
+
+> **How to read this report.** It has been deliberately shortened to ten pages for a general
+> business audience. Every figure quoted is calculated directly from the underlying data by the code
+> that also produced the reader's copy of this document, not typed in by hand, so every number here
+> can be traced back to its source. A companion technical report covers the full statistical detail,
+> including 41 supporting exhibits, for readers who want it.
+
+# The data behind this report
+
+Before analysing anything, the ten-thousand-row booking file was checked for problems, because a
+model is only as trustworthy as what it is built on. Three issues were found and corrected. Two
+columns that were supposed to record each patient's history of missed appointments turn out to be
+completely empty (`r uniqueN(raw$patient_previous_noshow_count)` distinct value across all
+`r num(N_APPT)` rows), so this analysis cannot flag "a patient who has a habit of missing
+appointments", only "an appointment that looks risky right now," which turns out to matter more in
+practice. Three financial columns (money lost, staff time wasted, whether the slot was rebooked) are
+calculated directly from whether the appointment was missed; using them to *predict* a no-show would
+be circular reasoning, so they are used only to size the loss in pounds, never to feed the model.
+Finally, the reminder-tracking fields overlapped in a way that would have broken the statistics if
+left as supplied, so they were consolidated into one clean signal. None of this changes the
+conclusions; it is what makes the conclusions trustworthy.
+
+```{r}
+#| label: prep
+#| include: false
+
+d <- copy(raw)
+d[, c("patient_previous_noshow_count", "patient_noshow_rate") := NULL]
+
+d[, `:=`(
+  reminder_response = factor(reminder_response,
+                             levels = c("Confirmed", "Ignored", "Cancelled", "No Reminder")),
+  reminder_lead     = factor(reminder_hours_before, levels = c(24, 48, 72),
+                             labels = c("24h", "48h", "72h")),
+  clinic_type       = factor(clinic_type, levels = c("GP", "Dental", "Physiotherapy", "Dermatology")),
+  appointment_type  = factor(appointment_type, levels = c("Follow-up", "New Patient")),
+  gender            = factor(gender, levels = c("Female", "Male")),
+  clinic_id         = factor(clinic_id),
+  dow               = factor(appointment_day_of_week,
+                             levels = c("Monday", "Tuesday", "Wednesday", "Thursday",
+                                        "Friday", "Saturday", "Sunday")),
+  outcome           = factor(no_show, levels = c(0, 1), labels = c("Attended", "No-show"))
+)]
+
+d[, `:=`(
+  lead_band = cut(days_in_advance, breaks = c(-1, 3, 7, 14, 21, Inf),
+                  labels = c("0-3 d", "4-7 d", "8-14 d", "15-21 d", "22+ d")),
+  dist_band = cut(distance_to_clinic_km, breaks = c(-1, 2, 5, 10, Inf),
+                  labels = c("0-2 km", "2-5 km", "5-10 km", "10+ km")),
+  age_band  = cut(age, breaks = c(17, 29, 39, 49, 59, Inf),
+                  labels = c("18-29", "30-39", "40-49", "50-59", "60+")),
+  gap_band  = cut(days_since_last_visit, breaks = c(-1, 60, 120, 240, Inf),
+                  labels = c("<2 mo", "2-4 mo", "4-8 mo", "8+ mo"))
+)]
+
+d[, `:=`(
+  rem_48h    = as.integer(sms_reminder_sent == 1 & reminder_hours_before == 48),
+  rem_72h    = as.integer(sms_reminder_sent == 1 & reminder_hours_before == 72),
+  rem_second = as.integer(sms_reminder_sent == 1 & number_of_reminders_sent == 2)
+)]
+
+d[, `:=`(
+  gross_exposure = estimated_revenue_loss_gbp + staff_idle_cost_gbp,
+  net_loss       = fifelse(slot_rebooked_flag == 1, staff_idle_cost_gbp,
+                           estimated_revenue_loss_gbp + staff_idle_cost_gbp)
+)]
+```
+
+# Sizing the loss
+
+```{r}
+#| label: fig-waterfall
+#| echo: false
+#| fig-cap: "Exhibit 2. From gross fee exposure to net economic loss. Rebooking recovers a meaningful share of forgone fees, but the idle-staff charge is incurred whether or not the slot is refilled."
+#| fig-height: 4.6
+
+wf <- data.table(
+  step = factor(c("Forgone\nfees", "Idle clinician\nand room", "Recovered by\nrebooking", "Net economic\nloss"),
+                levels = c("Forgone\nfees", "Idle clinician\nand room", "Recovered by\nrebooking", "Net economic\nloss")),
+  value = c(gross_loss, idle_cost, -recovered, net_loss),
+  kind  = c("add", "add", "subtract", "total")
+)
+wf[, end := cumsum(fifelse(kind == "total", 0, value))]
+wf[kind == "total", end := net_loss]
+wf[, start := fifelse(kind == "total", 0, end - value)]
+wf[, xi := as.numeric(step)]
+
+ggplot(wf) +
+  geom_rect(aes(xmin = xi - 0.34, xmax = xi + 0.34, ymin = start, ymax = end, fill = kind),
+            colour = pal$surface, linewidth = 0.9) +
+  geom_segment(data = wf[1:3], aes(x = xi + 0.34, xend = xi + 0.66, y = end, yend = end),
+               colour = pal$muted, linewidth = 0.35, linetype = "22") +
+  geom_text(aes(x = xi, y = pmax(start, end),
+                label = paste0(ifelse(value < 0, "-", ""), gbp(abs(value)))),
+            vjust = -0.75, family = "", size = 3.35, fontface = "bold", colour = pal$ink) +
+  scale_fill_manual(values = c(add = pal$s1, subtract = pal$s3, total = pal$critical), guide = "none") +
+  scale_x_continuous(breaks = 1:4, labels = levels(wf$step)) +
+  scale_y_continuous(labels = function(x) gbp_k(x), expand = expansion(mult = c(0, 0.17))) +
+  labs(title = "Only part of the headline exposure is genuinely lost",
+       subtitle = paste0("Gross exposure of ", gbp(gross_expo), " nets down to ", gbp(net_loss),
+                         " once the ", pc(rebook_rate), " of missed slots that get refilled are credited back"),
+       x = NULL, y = "Value, FY2026",
+       caption = paste0("n = ", num(N_APPT), " appointments, of which ", num(sum(d$no_show)),
+                        " were no-shows. Idle cost is fixed at 35% of the forgone fee.")) +
+  theme_clinic()
+```
+
+The headline figure of `r gbp(gross_loss)` in lost fees is the wrong number to plan around, in two
+directions at once. It understates the true cost because every missed appointment also strands a
+clinician and a room, adding `r gbp(idle_cost)` in idle time. It overstates the true cost because
+`r pc(rebook_rate)` of missed slots get filled by another patient, so that fee is not actually lost.
+Netting both adjustments gives `r gbp(net_loss)`, or `r gbp(loss_per_appt, 2)` per appointment booked.
+That per-appointment figure is the one that matters for planning, because it is the one that scales
+correctly if the network grows: it stays true whether the network books ten thousand appointments a
+year or twenty thousand, while the lump-sum total does not.
+
+Loss is not spread evenly. The *rate* of no-shows barely differs across the four service lines, but
+the *cost* of a no-show does, because a missed dermatology appointment carries a higher fee than a
+missed GP appointment. A prevention budget spent in proportion to failure rate would therefore waste
+money; spent in proportion to pounds at risk, it goes where it is worth most. That is how the
+targeting model described below is scored.
+
+# What drives it
+
+```{r}
+#| label: drivers-calc
+#| include: false
+
+rt <- rate_ci(d[sms_reminder_sent == 1], "reminder_lead")
+rt[, reminder_lead := factor(reminder_lead, levels = c("24h", "48h", "72h"))]
+
+pt_72 <- prop.test(
+  x = c(sum(d[sms_reminder_sent == 1 & reminder_hours_before == 72]$no_show),
+        sum(d[sms_reminder_sent == 1 & reminder_hours_before < 72]$no_show)),
+  n = c(nrow(d[sms_reminder_sent == 1 & reminder_hours_before == 72]),
+        nrow(d[sms_reminder_sent == 1 & reminder_hours_before < 72])),
+  correct = FALSE)
+eff_72 <- diff(rev(pt_72$estimate))
+
+ch <- rate_ci(d, "has_chronic_condition_flag")
+ch[, lab := factor(has_chronic_condition_flag, levels = c(0, 1),
+                   labels = c("No chronic condition", "Chronic condition recorded"))]
+chi_ch <- chisq.test(table(d$has_chronic_condition_flag, d$no_show))
+or_ch  <- { tt <- table(d$has_chronic_condition_flag, d$no_show)
+            (tt[2, 2] * tt[1, 1]) / (tt[2, 1] * tt[1, 2]) }
+
+t2b <- prop.test(x = c(sum(d[number_of_reminders_sent == 2]$no_show),
+                        sum(d[number_of_reminders_sent == 1]$no_show)),
+                  n = c(nrow(d[number_of_reminders_sent == 2]), nrow(d[number_of_reminders_sent == 1])),
+                  correct = FALSE)
+```
+
+```{r}
+#| label: fig-reminder-response
+#| echo: false
+#| fig-cap: "Exhibit 3. No-show rate by how the patient responded to their reminder. The gap is large, but because patients choose whether to confirm, it is an upper bound on what a confirmation campaign could achieve, not a clean effect estimate."
+#| fig-height: 4.2
+
+rr <- rate_ci(d, "reminder_response")
+rr[, reminder_response := factor(reminder_response, levels = rr[order(rate)]$reminder_response)]
+chi_rr <- chisq.test(table(d$reminder_response, d$no_show))
+
+ggplot(rr, aes(x = reminder_response, y = rate)) +
+  geom_hline(yintercept = BASE_RATE, colour = pal$muted, linewidth = 0.4, linetype = "22") +
+  geom_col(aes(fill = rate), width = 0.62) +
+  annotate("text", x = 0.56, y = BASE_RATE, label = paste0("network ", pc(BASE_RATE)),
+           vjust = -0.55, hjust = 0, family = "", size = 2.85, colour = pal$muted) +
+  geom_linerange(aes(ymin = lo, ymax = hi), colour = pal$ink, linewidth = 0.65, alpha = 0.55) +
+  geom_text(aes(y = hi, label = pc(rate)), vjust = -1.30, family = "", size = 3.2,
+            fontface = "bold", colour = pal$ink) +
+  scale_fill_gradientn(colours = pal$seq[c(2, 4, 6)], guide = "none") +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 0.345),
+                     expand = expansion(mult = c(0, 0.03))) +
+  labs(title = "Confirmation separates the book almost in half",
+       subtitle = paste0("Confirmers fail at ", pc(rr[reminder_response == "Confirmed"]$rate),
+                         " against ", pc(rr[reminder_response == "Cancelled"]$rate), " for cancellers left on the book"),
+       x = NULL, y = "No-show rate",
+       caption = "Vertical lines are 95% confidence intervals.") +
+  theme_clinic()
+```
+
+Three operational factors carry almost all of the explanatory power. **Booking lead time**:
+`r pc(mean(d[days_in_advance >= 22]$no_show))` of appointments made 22 or more days out are missed,
+against `r pc(mean(d[days_in_advance <= 3]$no_show))` for those booked within three days, and risk
+rises step by step in between. **Reminder confirmation**, shown above: patients who
+confirm miss `r pc(rr[reminder_response == "Confirmed"]$rate)` of appointments; patients who cancel
+but are left on the book anyway miss `r pc(rr[reminder_response == "Cancelled"]$rate)`. That gap is
+real but partly reflects who bothers to confirm, not just what confirming does, so it is used here
+for targeting rather than as a promised effect. **Reminder timing** is the cleaner result: because
+reminders are sent at 24, 48 or 72 hours in roughly equal numbers regardless of patient type, a
+72-hour reminder is associated with a `r pp(abs(eff_72))` lower no-show rate than a 24 or 48-hour one
+(p `r ifelse(pt_72$p.value < 0.0001, "< 0.0001", paste0("= ", formatC(pt_72$p.value, digits = 4, format = "f")))`),
+and this one comes closest to a genuine cause-and-effect finding, since the clinic assigns the timing,
+not the patient.
+
+Two findings are worth flagging precisely because they run against instinct. Patients with a chronic
+condition on file are *more* reliable attenders, not less
+(`r pc(ch[has_chronic_condition_flag == 1]$rate)` versus
+`r pc(ch[has_chronic_condition_flag == 0]$rate)`, odds ratio
+`r formatC(or_ch, digits = 2, format = "f")`), because an ongoing treatment relationship gives them a
+reason to show up. And several plausible levers turn out not to matter at all: a second reminder
+message changes the no-show rate by only
+`r pp(abs(t2b$estimate[1] - t2b$estimate[2]))`, statistically indistinguishable from zero, and neither
+clinic site nor day of week nor patient age moves risk in any usable way. Reporting a null result is
+as valuable as reporting a real one, because it says where *not* to spend.
+
+# Building the model
+
+A single prediction is not enough, because a clinic can act on risk at two different moments with two
+different sets of information: at the moment the appointment is booked, and again in the 24 to 72
+hours before it, once the reminder response is known. Two versions of the model were built to match
+those two moments.
+
+```{r}
+#| label: split
+#| include: false
+
+pids  <- unique(d$patient_id)
+perm  <- sample(pids)
+n_te  <- round(0.25 * length(perm)); n_ca <- round(0.25 * length(perm))
+assign_split <- data.table(
+  patient_id = perm,
+  split = c(rep("test", n_te), rep("calibration", n_ca),
+            rep("train", length(perm) - n_te - n_ca)))
+d[assign_split, split := i.split, on = "patient_id"]
+d[, split := factor(split, levels = c("train", "calibration", "test"))]
+
+train <- d[split == "train"]
+calib <- d[split == "calibration"]
+test  <- d[split == "test"]
+
+booking_vars <- c("age", "gender", "distance_to_clinic_km", "clinic_type", "clinic_id",
+                  "appointment_type", "consultation_fee_gbp", "days_in_advance",
+                  "appointment_hour", "is_weekend", "is_peak_hour", "dow",
+                  "patient_total_appointments", "days_since_last_visit",
+                  "has_chronic_condition_flag")
+pre_vars <- c(booking_vars, "reminder_response", "rem_48h", "rem_72h", "rem_second")
+
+design <- function(vars, data) {
+  f <- stats::as.formula(paste("~", paste(vars, collapse = " + ")))
+  stats::model.matrix(f, data)[, -1, drop = FALSE]
+}
+
+K <- 10
+fold_map  <- data.table(patient_id = unique(train$patient_id))
+fold_map[, fold := sample(rep_len(1:K, .N))]
+train_fold <- fold_map[match(train$patient_id, fold_map$patient_id)]$fold
+```
+
+Every patient's appointments were kept together in only one of three groups: a training group to fit
+the models, a calibration group to check and correct the models' confidence, and a holdout group set
+aside untouched until the very last step, so that the final accuracy figure is a genuinely honest
+one. Four competing approaches were tried, from a plain, fully transparent regression up to a tuned
+machine-learning ensemble, each tuned by cross-validation (repeatedly testing settings against a slice
+of the training data itself, never against the holdout). The model that is actually deployed was
+chosen on the calibration group, using a formal statistical test: find the best-scoring candidate,
+keep every other candidate that cannot be shown to be meaningfully worse, and among those, deploy the
+simplest and most explainable one. That rule exists to stop the choice of model from depending on
+which one happened to get lucky on a single sample.
+
+```{r}
+#| label: modelling
+#| include: false
+
+fit_stage <- function(vars, stage_name) {
+
+  Xtr <- design(vars, train); Xte <- design(vars, test); Xca <- design(vars, calib)
+  ytr <- train$no_show;       yte <- test$no_show;        yca <- calib$no_show
+  assign_map <- attr(stats::model.matrix(
+    stats::as.formula(paste("~", paste(vars, collapse = " + "))), train), "assign")[-1]
+
+  ## --- M1: unpenalised logistic ------------------------------------------
+  m_lr  <- stats::glm(y ~ ., data = data.frame(y = ytr, Xtr), family = stats::binomial)
+  p_lr  <- stats::predict(m_lr, newdata = data.frame(Xte), type = "response")
+  c_lr  <- stats::predict(m_lr, newdata = data.frame(Xca), type = "response")
+
+  ## --- M2: elastic net, grouped 10-fold CV over alpha and lambda ----------
+  alphas <- c(0, 0.25, 0.5, 0.75, 1)
+  en_grid <- data.table(alpha = alphas, cv_auc = NA_real_, lambda_1se = NA_real_, nonzero = NA_integer_)
+  en_fits <- vector("list", length(alphas))
+  for (i in seq_along(alphas)) {
+    cvf <- glmnet::cv.glmnet(Xtr, ytr, family = "binomial", alpha = alphas[i],
+                             foldid = train_fold, type.measure = "auc", standardize = TRUE)
+    en_fits[[i]] <- cvf
+    j <- which(cvf$lambda == cvf$lambda.1se)
+    en_grid[i, `:=`(cv_auc = cvf$cvm[j], lambda_1se = cvf$lambda.1se, nonzero = cvf$nzero[j])]
+  }
+  bi   <- which.max(en_grid$cv_auc)
+  m_en <- en_fits[[bi]]
+  p_en <- as.numeric(stats::predict(m_en, Xte, s = "lambda.1se", type = "response"))
+  c_en <- as.numeric(stats::predict(m_en, Xca, s = "lambda.1se", type = "response"))
+
+  ## --- M3: random forest, grid search on out-of-bag AUC ------------------
+  rf_grid <- data.table(expand.grid(mtry = c(3, 6, 10),
+                                    min.node.size = c(50, 150, 400, 900, 1600)))
+  rf_grid[, oob_auc := NA_real_]
+  for (i in seq_len(nrow(rf_grid))) {
+    f <- ranger::ranger(x = Xtr, y = factor(ytr), num.trees = 500,
+                        mtry = rf_grid$mtry[i], min.node.size = rf_grid$min.node.size[i],
+                        probability = TRUE, seed = 7, num.threads = 2)
+    rf_grid[i, oob_auc := as.numeric(pROC::auc(pROC::roc(ytr, f$predictions[, 2], quiet = TRUE)))]
+  }
+  ri   <- which.max(rf_grid$oob_auc)
+  m_rf <- ranger::ranger(x = Xtr, y = factor(ytr), num.trees = 1500,
+                         mtry = rf_grid$mtry[ri], min.node.size = rf_grid$min.node.size[ri],
+                         probability = TRUE, importance = "permutation", seed = 7, num.threads = 2)
+  p_rf <- stats::predict(m_rf, Xte)$predictions[, 2]
+  c_rf <- stats::predict(m_rf, Xca)$predictions[, 2]
+
+  ## --- M4: gradient boosting --------------------------------------------
+  boost_note   <- NA_character_
+  boost_engine <- NA_character_
+  p_bo <- c_bo <- NULL; imp_bo <- NULL
+
+  if (HAS_XGB) {
+    ok <- try({
+      fold_list <- split(seq_len(nrow(Xtr)), train_fold)
+      prm <- list(objective = "binary:logistic", eval_metric = "auc",
+                  eta = 0.03, max_depth = 3, subsample = 0.8,
+                  colsample_bytree = 0.8, min_child_weight = 30)
+      dtr <- xgboost::xgb.DMatrix(data = Xtr, label = ytr)
+      cvb <- xgboost::xgb.cv(params = prm, data = dtr, nrounds = 1500, folds = fold_list,
+                             early_stopping_rounds = 60, verbose = 0)
+      best_n <- which.max(cvb$evaluation_log$test_auc_mean)
+      m_bo   <- xgboost::xgb.train(params = prm, data = dtr, nrounds = best_n, verbose = 0)
+      p_bo   <- as.numeric(stats::predict(m_bo, xgboost::xgb.DMatrix(data = Xte)))
+      c_bo   <- as.numeric(stats::predict(m_bo, xgboost::xgb.DMatrix(data = Xca)))
+      imp_bo <- as.data.table(xgboost::xgb.importance(model = m_bo))[, .(Feature, Gain)]
+      boost_engine <- "XGBoost"
+      boost_note <- paste0("eta 0.03, depth 3, subsample 0.8, column sample 0.8, minimum child ",
+                           "weight 30, and ", best_n,
+                           " trees selected by grouped 10-fold cross-validation with early stopping")
+      TRUE
+    }, silent = TRUE)
+    if (inherits(ok, "try-error")) { p_bo <- NULL; boost_engine <- NA_character_ }
+  }
+
+  if (is.null(p_bo) && HAS_GBM) {
+    dfb  <- data.frame(y = ytr, Xtr)
+    m_bo <- gbm::gbm(y ~ ., data = dfb, distribution = "bernoulli", n.trees = 1500,
+                     interaction.depth = 3, shrinkage = 0.03, bag.fraction = 0.8,
+                     n.minobsinnode = 30, cv.folds = 5, verbose = FALSE, n.cores = 2)
+    best_n <- gbm::gbm.perf(m_bo, method = "cv", plot.it = FALSE)
+    p_bo   <- stats::predict(m_bo, newdata = data.frame(Xte), n.trees = best_n, type = "response")
+    c_bo   <- stats::predict(m_bo, newdata = data.frame(Xca), n.trees = best_n, type = "response")
+    ib     <- as.data.table(summary(m_bo, n.trees = best_n, plotit = FALSE))
+    imp_bo <- ib[, .(Feature = as.character(var), Gain = rel.inf / 100)]
+    boost_engine <- "GBM"
+    boost_note <- paste0("shrinkage 0.03, depth 3, bagging fraction 0.8, minimum node 30, and ",
+                         best_n, " trees selected by 5-fold cross-validation")
+  }
+
+  if (is.null(p_bo)) { p_bo <- rep(mean(ytr), length(yte)); c_bo <- rep(mean(ytr), length(yca)) }
+
+  preds <- list(`Logistic regression` = p_lr, `Elastic net` = p_en, `Random forest` = p_rf)
+  cals  <- list(`Logistic regression` = c_lr, `Elastic net` = c_en, `Random forest` = c_rf)
+
+  pfun <- list(
+    `Logistic regression` = function(M) as.numeric(stats::predict(m_lr, newdata = data.frame(M),
+                                                                  type = "response")),
+    `Elastic net`         = function(M) as.numeric(stats::predict(m_en, M, s = "lambda.1se",
+                                                                  type = "response")),
+    `Random forest`       = function(M) stats::predict(m_rf, M)$predictions[, 2])
+
+  if (!is.na(boost_engine)) {
+    bnm <- paste0("Gradient boosting (", boost_engine, ")")
+    preds[[bnm]] <- p_bo
+    cals[[bnm]]  <- c_bo
+    pfun[[bnm]]  <- if (boost_engine == "XGBoost") {
+      function(M) as.numeric(stats::predict(m_bo, xgboost::xgb.DMatrix(data = M)))
+    } else {
+      function(M) as.numeric(stats::predict(m_bo, newdata = data.frame(M),
+                                            n.trees = best_n, type = "response"))
+    }
+  }
+
+  list(stage = stage_name, vars = vars, X_test = Xte, y_test = yte, assign_map = assign_map,
+       preds = preds, cals = cals, pfun = pfun, y_calib = yca, boost_engine = boost_engine,
+       m_lr = m_lr, m_en = m_en, m_rf = m_rf,
+       en_grid = en_grid, rf_grid = rf_grid, en_alpha = alphas[bi],
+       rf_mtry = rf_grid$mtry[ri], rf_node = rf_grid$min.node.size[ri],
+       boost_note = boost_note, imp_bo = imp_bo)
+}
+
+evaluate <- function(y, p) {
+  r  <- pROC::roc(y, p, quiet = TRUE, direction = "<")
+  ci <- as.numeric(pROC::ci.auc(r))
+  lp  <- stats::qlogis(pmin(pmax(p, 1e-6), 1 - 1e-6))
+  cal <- stats::glm(y ~ lp, family = stats::binomial)
+  cs  <- summary(cal)$coefficients
+  data.table(AUC = as.numeric(pROC::auc(r)), AUC_lo = ci[1], AUC_hi = ci[3],
+             Brier = mean((p - y)^2),
+             Cal_slope = cs[2, 1],
+             Cal_slope_lo = cs[2, 1] - 1.96 * cs[2, 2],
+             Cal_slope_hi = cs[2, 1] + 1.96 * cs[2, 2],
+             Cal_int   = cs[1, 1],
+             KS = max(abs(stats::ecdf(p[y == 1])(sort(p)) - stats::ecdf(p[y == 0])(sort(p)))))
+}
+
+stageA <- fit_stage(booking_vars, "Stage A: booking-time")
+stageB <- fit_stage(pre_vars,     "Stage B: pre-appointment")
+BOOST_ENGINE <- stageB$boost_engine
+
+perf <- rbindlist(lapply(list(stageA, stageB), function(s)
+  rbindlist(lapply(names(s$preds), function(nm)
+    cbind(data.table(Stage = s$stage, Model = nm), evaluate(s$y_test, s$preds[[nm]]))))))
+
+simplicity <- function(m) fcase(grepl("^Logistic",  m), 1L,
+                                grepl("^Elastic",   m), 2L,
+                                grepl("forest",     m), 3L,
+                                default = 4L)
+
+roc_cal <- lapply(stageB$cals, function(p)
+  pROC::roc(stageB$y_calib, p, quiet = TRUE, direction = "<"))
+sel_dt <- data.table(Model = names(roc_cal),
+                     cal_auc = vapply(roc_cal, function(r) as.numeric(pROC::auc(r)), numeric(1)))
+setorder(sel_dt, -cal_auc)
+TOP_MODEL <- sel_dt$Model[1]
+sel_dt[, delong_p := vapply(Model, function(m) if (m == TOP_MODEL) NA_real_ else
+      pROC::roc.test(roc_cal[[TOP_MODEL]], roc_cal[[m]], method = "delong")$p.value, numeric(1))]
+sel_dt[, tied   := is.na(delong_p) | delong_p > 0.05]
+sel_dt[, simple := simplicity(Model)]
+
+SEL_MODEL  <- sel_dt[tied == TRUE][order(simple, -cal_auc)]$Model[1]
+N_RIVALS   <- nrow(sel_dt) - 1L
+N_TIED     <- sum(sel_dt$tied) - 1L
+best_row   <- perf[Stage == "Stage B: pre-appointment" & Model == SEL_MODEL]
+BEST_MODEL <- SEL_MODEL
+raw_p      <- stageB$preds[[SEL_MODEL]]
+auc_gain   <- perf[Model == SEL_MODEL & Stage == "Stage B: pre-appointment"]$AUC -
+              perf[Model == SEL_MODEL & Stage == "Stage A: booking-time"]$AUC
+SEL_IS_LINEAR <- simplicity(SEL_MODEL) <= 2L
+
+clip     <- function(p) pmin(pmax(p, 1e-6), 1 - 1e-6)
+platt    <- stats::glm(y ~ lo, family = stats::binomial,
+                       data = data.frame(y = stageB$y_calib,
+                                         lo = stats::qlogis(clip(stageB$cals[[BEST_MODEL]]))))
+recalibrate <- function(p) as.numeric(stats::predict(
+  platt, newdata = data.frame(lo = stats::qlogis(clip(p))), type = "response"))
+best_p   <- recalibrate(raw_p)
+
+cal_before <- evaluate(stageB$y_test, raw_p)
+cal_after  <- evaluate(stageB$y_test, best_p)
+```
+
+```{r}
+#| label: exhibit-performance-short
+#| echo: false
+
+show2 <- perf[Stage == "Stage B: pre-appointment"]
+show2 <- merge(show2, sel_dt[, .(Model, tied)], by = "Model", all.x = TRUE, sort = FALSE)
+setorder(show2, -AUC)
+show2 <- show2[, .(Model,
+                   `Holdout accuracy score (AUC)` = formatC(AUC, digits = 3, format = "f"),
+                   `95% confidence range` = paste0(formatC(AUC_lo, digits = 3, format = "f"), " to ",
+                                                   formatC(AUC_hi, digits = 3, format = "f")),
+                   Verdict = fifelse(Model == SEL_MODEL, "Deployed",
+                              fifelse(tied, "Statistically tied", "Measurably weaker")))]
+tbl(show2, caption = paste0("Exhibit 4. How the four candidate models performed on ", num(nrow(test)),
+                            " appointments none of them had seen before. ", SEL_MODEL,
+                            " was deployed because it is not measurably worse than the top scorer and is ",
+                            "the simplest one a person can read and check by hand."))
+```
+
+The score in that table, AUC, works like this: pick one appointment at random that turned out to be a
+no-show and one that did not, and ask the model which it thought was riskier. A score of 50% is a coin
+flip; a score of 100% would mean the model is never wrong. `r SEL_MODEL` scores
+`r formatC(best_row$AUC, digits = 3, format = "f")`, which is honest but modest, and it is reported on
+appointments and patients the model never saw during fitting, so it is not a flattered number. The
+notable result is that a far more sophisticated machine-learning model, tested alongside it, could not
+score measurably better: `r N_TIED` of its `r N_RIVALS` rivals are statistically indistinguishable
+from the winner. That is not a disappointing outcome, it is a finding in its own right — it means the
+relationship between these operational factors and attendance is simple and additive rather than
+hidden in complex combinations, so there is no accuracy paid up in exchange for using the version a
+clinician can actually read. Before its probabilities were used for anything financial, the model's
+confidence was also double-checked and corrected on data set aside for exactly that purpose, so that a
+predicted 25% risk really does behave like roughly a one-in-four chance.
+
+```{r}
+#| label: fig-permutation
+#| echo: false
+#| fig-cap: "Exhibit 5. What actually carries the model. Each factor is scrambled in turn and the resulting drop in accuracy measured on data the model never trained on; a bigger drop means the model relies on that factor more."
+#| fig-height: 4.6
+
+perm_importance <- function(stage_obj, pred_fun, n_rep = 20) {
+  X <- stage_obj$X_test; y <- stage_obj$y_test
+  base_auc <- as.numeric(pROC::auc(pROC::roc(y, pred_fun(X), quiet = TRUE, direction = "<")))
+  grp <- split(seq_len(ncol(X)), stage_obj$assign_map)
+  nm  <- stage_obj$vars[as.integer(names(grp))]
+  out <- vapply(seq_along(grp), function(g) {
+    drops <- vapply(seq_len(n_rep), function(r) {
+      Xp <- X
+      idx <- sample.int(nrow(X))
+      Xp[, grp[[g]]] <- X[idx, grp[[g]], drop = FALSE]
+      base_auc - as.numeric(pROC::auc(pROC::roc(y, pred_fun(Xp), quiet = TRUE, direction = "<")))
+    }, numeric(1))
+    c(mean(drops), stats::sd(drops))
+  }, numeric(2))
+  data.table(variable = nm, drop = out[1, ], se = out[2, ] / sqrt(n_rep))
+}
+
+pf_sel <- stageB$pfun[[SEL_MODEL]]
+pi_dt  <- perm_importance(stageB, pf_sel, n_rep = 20)
+
+pretty_var <- c(reminder_response = "Reminder response", days_in_advance = "Booking lead time",
+                distance_to_clinic_km = "Distance to clinic",
+                has_chronic_condition_flag = "Chronic condition flag",
+                rem_48h = "Reminder sent 48h ahead", rem_72h = "Reminder sent 72h ahead",
+                rem_second = "Second reminder sent", age = "Age",
+                consultation_fee_gbp = "Consultation fee", clinic_type = "Service line",
+                appointment_hour = "Appointment hour", days_since_last_visit = "Days since last visit",
+                patient_total_appointments = "Patient appointment count", gender = "Gender",
+                appointment_type = "Appointment type", dow = "Day of week",
+                is_weekend = "Weekend flag", is_peak_hour = "Peak-hour flag",
+                clinic_id = "Clinic site")
+pi_dt[, label := ifelse(variable %in% names(pretty_var), pretty_var[variable], variable)]
+setorder(pi_dt, drop)
+pi_dt[, label := factor(label, levels = label)]
+pi_dt[, tier := fifelse(drop > 0.008, "Carries the model",
+                 fifelse(drop > 0.0005, "Marginal contribution", "No measurable contribution"))]
+N_ZERO  <- pi_dt[tier == "No measurable contribution", .N]
+CARRY   <- rev(as.character(pi_dt[tier != "No measurable contribution"]$label))
+N_CARRY <- length(CARRY)
+carry_list <- if (N_CARRY > 1)
+  paste0(paste(CARRY[-N_CARRY], collapse = ", "), " and ", CARRY[N_CARRY]) else CARRY[1]
+
+ggplot(pi_dt, aes(x = drop, y = label, fill = tier)) +
+  geom_col(width = 0.66) +
+  geom_linerange(aes(xmin = drop - 1.96 * se, xmax = drop + 1.96 * se),
+                 colour = pal$ink, linewidth = 0.45, alpha = 0.6) +
+  scale_fill_manual(values = c(`Carries the model` = pal$s1,
+                               `Marginal contribution` = pal$seq[3],
+                               `No measurable contribution` = pal$rule),
+                    name = NULL, breaks = c("Carries the model", "Marginal contribution",
+                                            "No measurable contribution")) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.1)),
+                     labels = number_format(accuracy = 0.005)) +
+  labs(title = paste0(N_CARRY, " factors carry the model; the rest contribute nothing measurable"),
+       subtitle = paste0("Loss in accuracy when each factor is scrambled, mean of 20 repeats. Model: ", SEL_MODEL),
+       x = "Drop in holdout accuracy when scrambled", y = NULL,
+       caption = "Related dummy columns from one original factor are scrambled together.") +
+  theme_clinic(grid = "x", base_size = 11)
+```
+
+Only `r N_CARRY` of the `r nrow(pi_dt)` factors available to the model do any measurable work:
+**`r carry_list`**. That shortlist is what makes the problem tractable for a clinic to act on. Lead
+time and reminder response are set by the clinic, not by the patient; distance is known the moment a
+patient registers and costs nothing to look up. The model is, in effect, telling the network that its
+no-show problem is a scheduling and communication problem, not a patient problem.
+
+# The business case
+
+Not every classification error costs the same. A wasted outreach call is cheap; a missed appointment
+that goes uncontacted is expensive.
+
+```{r}
+#| label: exhibit-cost-matrix
+#| include: false
+
+C_OUTREACH  <- 4.00
+UPLIFT      <- 0.20
+mean_fee    <- mean(d[no_show == 1]$estimated_revenue_loss_gbp)
+mean_net    <- mean(d[no_show == 1]$net_loss)
+```
+
+On these figures, a genuine no-show costs the clinic about `r gbp(mean_net, 0)` in lost value once idle time and
+rebooking are accounted for, while a phone call to a patient who was always going to attend costs
+about `r gbp(C_OUTREACH, 2)`. Because those two numbers are roughly
+`r formatC(mean_net / C_OUTREACH, digits = 0, format = "f")` to one apart, the sensible policy is not
+to call every patient, or the top half, or the top 5%; it is to work out, from the economics, exactly
+which risk score makes a call worth its cost, and stop there.
+
+```{r}
+#| label: fig-threshold
+#| include: false
+
+econ <- data.table(p = best_p, y = stageB$y_test,
+                   value = test$estimated_revenue_loss_gbp,
+                   fee = test$consultation_fee_gbp)
+econ[, net_if_missed := fee * (1 - rebook_rate) + fee * 0.35]
+
+thr_grid <- seq(0.05, 0.60, by = 0.005)
+tres <- rbindlist(lapply(thr_grid, function(t) {
+  flag <- econ$p >= t
+  benefit <- sum(UPLIFT * econ$net_if_missed[flag & econ$y == 1])
+  cost    <- C_OUTREACH * sum(flag)
+  data.table(threshold = t, flagged = sum(flag), share = mean(flag),
+             tp = sum(flag & econ$y == 1), fp = sum(flag & econ$y == 0),
+             benefit = benefit, cost = cost, net = benefit - cost)
+}))
+best_thr <- tres[which.max(net)]
+scale_up <- N_APPT / nrow(test)
+```
+
+```{r}
+#| label: exhibit-confusion
+#| include: false
+
+flag <- econ$p >= best_thr$threshold
+cmx  <- table(factor(flag, c(TRUE, FALSE)), factor(econ$y, c(1, 0)))
+sens <- cmx[1, 1] / sum(cmx[, 1]); spec <- cmx[2, 2] / sum(cmx[, 2])
+prec <- cmx[1, 1] / sum(cmx[1, ])
+```
+
+At the economically optimal cut-off, `r pc(best_thr$threshold, 1)` predicted risk, the clinic would
+contact `r pc(best_thr$share)` of its book and catch `r pc(sens)` of the appointments that go on to be
+missed, for a modelled net benefit of `r gbp(best_thr$net * scale_up)` a year. Only about
+`r pc(prec)` of the calls made at that threshold turn out to be genuine no-shows, which sounds low but
+is not a flaw: because the value of catching a real no-show is so much larger than the cost of a
+wasted call, the programme is still comfortably profitable even with most calls "missing." Two of the
+numbers behind that estimate, the cost of a call and how often a call actually changes a patient's
+behaviour, are assumptions rather than measurements, because this dataset contains no record of anyone
+having actually tried the intervention. The chart below shows what happens to the business case across
+a wide range of both assumptions, rather than hiding that uncertainty behind a single confident figure.
+
+```{r}
+#| label: fig-sensitivity
+#| echo: false
+#| fig-cap: "Exhibit 6. Modelled annual net benefit of the outreach programme, re-optimised for every combination of call cost and behavioural effect. A cell reading \"do not run\" means no threshold covers its costs, so the clinic is better off not calling anyone under that assumption."
+#| fig-height: 4.8
+
+grid_u <- seq(0.05, 0.40, by = 0.05)
+grid_c <- c(2, 4, 6, 8, 10, 12)
+sens_dt <- rbindlist(lapply(grid_u, function(u) rbindlist(lapply(grid_c, function(cc) {
+  vals <- vapply(thr_grid, function(t) {
+    fl <- econ$p >= t
+    u * sum(econ$net_if_missed[fl & econ$y == 1]) - cc * sum(fl)
+  }, numeric(1))
+  best <- max(max(vals), 0)
+  data.table(uplift = u, cost = cc, net = best * scale_up)
+}))))
+sens_dt[, worth_running := net > 500]
+BASE_CELL  <- sens_dt[uplift == UPLIFT & cost == C_OUTREACH]$net
+SHARE_LIVE <- mean(sens_dt$worth_running)
+MIN_UPLIFT <- sens_dt[worth_running == TRUE & cost == C_OUTREACH, min(uplift)]
+PROG_BREAKEVEN <- MIN_UPLIFT
+
+ggplot(sens_dt, aes(x = factor(cost), y = factor(uplift))) +
+  geom_tile(aes(fill = net), colour = pal$surface, linewidth = 1.6) +
+  geom_text(aes(label = ifelse(worth_running, gbp_k(net), "do not run")),
+            family = "", size = 2.75,
+            colour = ifelse(sens_dt$net > 0.55 * max(sens_dt$net), "white", pal$ink)) +
+  scale_fill_gradientn(colours = pal$seq[c(1, 2, 4, 6, 7)], labels = function(x) gbp_k(x),
+                       name = "Annual net benefit  ") +
+  guides(fill = guide_colourbar(barwidth = 11, barheight = 0.5, title.vjust = 0.92)) +
+  scale_x_discrete(labels = function(x) gbp(as.numeric(x), 0)) +
+  scale_y_discrete(labels = function(x) pc(as.numeric(x), 0)) +
+  labs(title = "The programme only pays off in part of this range",
+       subtitle = paste0("Base case (", pc(UPLIFT), " behavioural effect at ", gbp(C_OUTREACH, 2),
+                         " per call) returns ", gbp(BASE_CELL), " a year"),
+       x = "Cost per patient contacted", y = "Share of contacted patients who change behaviour",
+       caption = "Darker means more value. Every cell re-solves for its own best threshold.") +
+  theme_clinic(grid = "none", base_size = 11) +
+  theme(axis.line.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "top")
+```
+
+Read this chart as a stress test rather than a forecast. Holding the call cost at
+`r gbp(C_OUTREACH, 2)`, tripling it to `r gbp(6, 0)` would remove a large share of the value; on the
+other axis, the programme needs the behavioural effect to reach at least
+`r pc(MIN_UPLIFT, 0)` before it is worth running at all, and `r sum(!sens_dt$worth_running)` of the
+`r nrow(sens_dt)` combinations tested say the same thing: do not run it. That is exactly why the
+recommendation below treats the targeted-outreach play as something to pilot on a small scale first,
+not something to roll out on faith.
+
+# Recommendations
+
+Four changes are recommended, in the order they should be made. The first three need no new evidence
+because they either cost nothing or fix a pure process gap; the fourth should be tested on a small
+group of patients before it is scaled network-wide.
+
+```{r}
+#| label: value-calc
+#| include: false
+
+n_sub72   <- nrow(d[sms_reminder_sent == 1 & reminder_hours_before < 72])
+p1_saved  <- abs(eff_72) * n_sub72
+p1_value  <- p1_saved * mean_net
+p1_cost   <- 0
+
+n_norem   <- nrow(d[sms_reminder_sent == 0])
+gap_rem   <- mean(d[sms_reminder_sent == 0]$no_show) - mean(d[reminder_lead == "72h"]$no_show)
+p2_saved  <- max(gap_rem, 0) * n_norem
+p2_value  <- p2_saved * mean_net
+p2_cost   <- n_norem * 0.06
+
+p3_value  <- best_thr$benefit * scale_up
+p3_cost   <- best_thr$cost * scale_up
+p3_saved  <- UPLIFT * best_thr$tp * scale_up
+
+n_cxl_ns  <- nrow(d[reminder_response == "Cancelled" & no_show == 1])
+p4_recov  <- 0.5
+p4_value  <- n_cxl_ns * p4_recov * mean(d[reminder_response == "Cancelled" & no_show == 1]$estimated_revenue_loss_gbp)
+p4_cost   <- 2500
+p4_saved  <- n_cxl_ns * p4_recov
+
+plays <- data.table(
+  Play = c("1. Default the reminder to 72 hours ahead",
+           "2. Extend reminder coverage to everyone",
+           "3. Targeted outreach on the flagged tail (pilot first)",
+           "4. Auto-release slots when a patient cancels"),
+  `Annual value` = c(gbp(p1_value), gbp(p2_value), gbp(p3_value), gbp(p4_value)),
+  `Annual cost` = c(gbp(p1_cost), gbp(p2_cost), gbp(p3_cost), gbp(p4_cost)),
+  `Net annual benefit` = c(gbp(p1_value - p1_cost), gbp(p2_value - p2_cost),
+                           gbp(p3_value - p3_cost), gbp(p4_value - p4_cost))
+)
+p1_net <- p1_value - p1_cost; p2_net <- p2_value - p2_cost
+p3_net <- p3_value - p3_cost; p4_net <- p4_value - p4_cost
+total_net      <- p1_net + p2_net + p3_net + p4_net
+now_net        <- p1_net + p2_net + p4_net
+gated_net      <- p3_net
+recovery_share <- total_net / net_loss
+now_share      <- now_net / net_loss
+gated_share    <- gated_net / net_loss
+```
+
+```{r}
+#| label: exhibit-plays
+#| echo: false
+tbl(plays, caption = paste0("Exhibit 7. The recommended action plan. Combined it is worth ", gbp(total_net),
+                            " a year, ", pc(recovery_share), " of the current net loss. ", gbp(now_net),
+                            " of that (", pc(now_share), ") needs no pilot and could start next quarter."))
+```
+
+Play 3, targeted outreach, is the only one gated behind testing, because its value depends entirely on
+an assumption (that a call changes `r pc(UPLIFT)` of contacted patients' behaviour) that nothing in
+this dataset can confirm. Before it is scaled network-wide, it should be run as a genuine randomised
+trial: call half of the flagged, highest-risk appointments and leave the other half as a comparison
+group, then measure whether the called group actually attends more. Since only
+`r pc(prec)` of flagged appointments are genuine no-shows, the programme needs to move the needle by
+roughly `r pc(PROG_BREAKEVEN, 0)` to break even, a real but not enormous bar to clear, and one worth
+testing cheaply before committing to it at scale.
+
+# Limitations
+
+Four caveats should travel with every number above. The dataset behind this report has the
+statistical fingerprints of simulated rather than real-world data (no missing values, exact
+arithmetic relationships between fields), so the analytical method is sound and reusable on a real
+extract, but the specific pounds and percentages should be treated as illustrative rather than as
+this network's confirmed budget line. Two fields meant to capture each patient's history of missed
+appointments are empty in this extract, so no "chronically unreliable patient" segment could be
+identified, only risk at the level of the individual appointment. The gap between patients who
+confirm and patients who ignore a reminder mixes a real effect with patients simply self-selecting,
+so it is used for ranking risk, never presented as a promised saving. And the whole business case
+rests on one figure this dataset cannot supply: how much a phone call actually changes a patient's
+behaviour, which is exactly what the recommended pilot is designed to measure before real money is
+committed at scale.
+
+# Conclusion
+
+This network loses `r gbp(net_loss)` a year to appointments that are booked, staffed and never
+attended, `r gbp(loss_per_appt, 2)` on every appointment it takes. That loss is driven by how the
+clinic schedules and reminds, not by who its patients are: booking lead time, reminder timing and
+unreleased cancellations explain most of what can be explained, and all three are within the clinic's
+own control. A model built from those factors cannot say which specific patient will miss their
+appointment, but it can rank appointments by risk well enough to make a targeted phone programme
+profitable, and the fact that a far more complex model could not beat it is itself reassuring: the
+relationship is simple enough to trust and cheap enough to maintain.
+
+Put together, the four recommended changes are worth `r gbp(total_net)` a year, `r pc(recovery_share)`
+of the current loss. The more important number is the split: `r gbp(now_net)`
+(`r pc(now_share)`) needs no pilot and no new evidence, only a decision to change three operational
+settings, while the remaining `r gbp(gated_net)` is real money on the table conditional on a small,
+cheap trial confirming that outreach calls actually change behaviour. That is a deliberately modest
+claim next to the size of the problem, and it is the honest one: this report shows the clinic exactly
+how much of its no-show loss it can recover starting next quarter, and exactly what it needs to test
+before promising the rest.
+
+---
+
+*Reproducibility: random seed `r SEED`, one value governing every step above. The full technical
+report behind this summary, patient-level data audit, four-model bake-off with tuning detail,
+calibration diagnostics and 41 supporting exhibits, is available as a companion document.*
