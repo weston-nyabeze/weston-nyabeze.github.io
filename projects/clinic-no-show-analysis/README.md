@@ -90,7 +90,7 @@ Seed `1234568` governs every stochastic step, so the reported figures reproduce 
 ## Limitations
 
 The data is observational, so every effect here is an association rather than a causal
-estimate — the 72-hour reminder result in particular is the one most worth confirming with
+estimate, the 72-hour reminder result in particular is the one most worth confirming with
 a randomised trial before it's treated as a lever. Cost figures rest on stated consultation
 fees and a modelled staff idle rate, and the benefit projections assume behavioural uplifts
 that only a pilot can measure.
