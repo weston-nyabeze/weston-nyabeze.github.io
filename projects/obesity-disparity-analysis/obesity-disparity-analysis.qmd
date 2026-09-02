@@ -1,0 +1,1770 @@
+---
+title: "The Gap That Didn't Close"
+subtitle: "Income, race and US adult obesity, 2011-2024"
+author: "Weston T. Nyabeze"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+    fig-width: 8
+    fig-height: 4.8
+    fig-dpi: 200
+    embed-resources: true
+    smooth-scroll: true
+execute:
+  warning: false
+  message: false
+  echo: true
+knitr:
+  opts_chunk:
+    dev: "png"
+    dev.args:
+      bg: "white"
+---
+
+```{r setup}
+#| include: false
+suppressPackageStartupMessages({
+  library(readr); library(dplyr); library(tidyr); library(ggplot2)
+  library(stringr); library(forcats); library(purrr); library(tibble)
+  library(scales); library(broom); library(knitr); library(kableExtra)
+  library(ranger); library(gbm); library(forecast); library(cluster)
+  library(plotly)
+})
+set.seed(20260902)
+
+# Shared palette and theme. Categorical hues are assigned in a fixed order and
+# never cycled; ordered variables get a single-hue sequential ramp instead,
+# because their job is magnitude rather than identity.
+PAL_CAT <- c("#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+             "#e87ba4", "#008300", "#4a3aa7", "#e34948")
+PAL_SEQ <- c("#86b6ef", "#5598e7", "#3987e5", "#2a78d6",
+             "#256abf", "#1c5cab", "#184f95", "#104281")
+INK_PRIMARY <- "#0b0b0b"; INK_SECONDARY <- "#52514e"; INK_MUTED <- "#8a8984"
+SURFACE <- "#ffffff"; GRID <- "#e8e7e3"
+
+theme_report <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      text = element_text(colour = INK_PRIMARY),
+      plot.title = element_text(face = "bold", size = rel(1.12), margin = margin(b = 3)),
+      plot.subtitle = element_text(colour = INK_SECONDARY, size = rel(0.95), margin = margin(b = 12)),
+      plot.caption = element_text(colour = INK_MUTED, size = rel(0.8), hjust = 0, margin = margin(t = 10)),
+      plot.title.position = "plot", plot.caption.position = "plot",
+      axis.title = element_text(colour = INK_SECONDARY, size = rel(0.9)),
+      axis.text = element_text(colour = INK_SECONDARY, size = rel(0.85)),
+      panel.grid.major = element_line(colour = GRID, linewidth = 0.35),
+      panel.grid.minor = element_blank(),
+      panel.background = element_rect(fill = SURFACE, colour = NA),
+      plot.background = element_rect(fill = SURFACE, colour = NA),
+      legend.position = "top", legend.justification = "left",
+      legend.title = element_blank(),
+      legend.text = element_text(colour = INK_SECONDARY, size = rel(0.85)),
+      legend.key.height = unit(0.8, "lines"),
+      strip.text = element_text(colour = INK_PRIMARY, face = "bold", size = rel(0.9), hjust = 0)
+    )
+}
+theme_set(theme_report())
+pct_axis <- function(...) scale_y_continuous(labels = label_number(suffix = "%"), ...)
+
+tbl <- function(x, ...) {
+  kbl(x, booktabs = TRUE, ...) |>
+    kable_styling(bootstrap_options = c("striped", "condensed"),
+                  full_width = FALSE, position = "left", font_size = 13)
+}
+
+# ---------------------------------------------------------------------------
+# Every figure in this report is a live plotly chart: hover any mark for its
+# underlying values, click a legend entry to hide a series, double-click one to
+# isolate it, and drag to zoom. gg_live() is the single conversion point, so
+# the charts are authored once in ggplot and every one of them gets the same
+# interaction chrome.
+# ---------------------------------------------------------------------------
+FONT <- "system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
+
+gg_live <- function(p, tooltip = "text", hovermode = "closest",
+                    legend = TRUE, muted = NULL) {
+  ttl <- p$labels$title
+  sub <- p$labels$subtitle
+  has_xlab <- !is.null(p$labels$x)
+  p <- p + labs(title = NULL, subtitle = NULL, caption = NULL)
+
+  # Height is left to the chunk's fig-height so that Quarto sizes the
+  # container and the widget identically and nothing is clipped.
+  w <- ggplotly(p, tooltip = tooltip)
+
+  # Confidence bands, reference lines and backdrop series are drawn for context
+  # only: they are dropped from the hover layer and from the legend so that
+  # neither is cluttered by marks the reader is not meant to interrogate.
+  seen <- character(0)
+  w$x$data <- lapply(w$x$data, function(tr) {
+    band  <- !is.null(tr$fill) && identical(tr$fill, "toself")
+    greyed <- !is.null(muted) && !is.null(tr$line$color) &&
+              any(startsWith(tolower(tr$line$color), tolower(muted)))
+    if (band || greyed) {
+      tr$hoverinfo <- "skip"; tr$showlegend <- FALSE; return(tr)
+    }
+    if (!is.null(tr$name)) {
+      nm <- sub("^\\((.*),\\s*-?\\d+\\)$", "\\1", tr$name)
+      tr$name <- nm; tr$legendgroup <- nm
+      if (nm %in% seen) tr$showlegend <- FALSE else seen <<- c(seen, nm)
+    }
+    tr
+  })
+
+  # Plotly titles do not wrap, and the report's content column is narrower than
+  # a long headline, so the wrapping is done here explicitly.
+  wrap_html <- function(x, width) paste(strwrap(x, width = width), collapse = "<br>")
+
+  title_html <- paste0("<b>", wrap_html(ttl, 58), "</b>",
+    if (!is.null(sub)) paste0("<br><span style='font-size:12.5px;color:",
+                              INK_SECONDARY, "'>", wrap_html(sub, 76), "</span>"))
+  n_lines <- lengths(regmatches(title_html, gregexpr("<br>", title_html))) + 1
+
+  w |>
+    layout(
+      # Title and legend are anchored to the figure container rather than to
+      # the plot area, so neither drifts when a long axis label widens the
+      # margins, and the legend can never collide with the axis title.
+      title = list(text = title_html, x = 0.005, xanchor = "left",
+                   xref = "container", y = 0.97, yanchor = "top",
+                   yref = "container",
+                   font = list(size = 16.5, color = INK_PRIMARY, family = FONT)),
+      margin = list(t = 26 + 20 * n_lines, l = 62, r = 26,
+                    b = 46 + (if (has_xlab) 24 else 0) + (if (legend) 40 else 0)),
+      hovermode = hovermode,
+      showlegend = legend,
+      legend = list(orientation = "h", x = 0.005, xanchor = "left",
+                    y = 0.01, yanchor = "bottom", yref = "container",
+                    font = list(size = 12), title = list(text = "")),
+      font = list(family = FONT, size = 12, color = INK_SECONDARY),
+      paper_bgcolor = SURFACE, plot_bgcolor = SURFACE,
+      hoverlabel = list(bgcolor = "white", bordercolor = GRID, align = "left",
+                        font = list(family = FONT, size = 12, color = INK_PRIMARY))
+    ) |>
+    config(displaylogo = FALSE, displayModeBar = "hover",
+           modeBarButtonsToRemove = c("select2d", "lasso2d", "autoScale2d",
+                                      "hoverClosestCartesian",
+                                      "hoverCompareCartesian", "toggleSpikelines"),
+           toImageButtonOptions = list(format = "png", scale = 2))
+}
+
+comma <- function(x) format(x, big.mark = ",", trim = TRUE)
+
+# GitHub's markdown renderer cannot display an interactive widget, so four of
+# the charts below are also written out as static PNGs for the README. They are
+# saved from the same ggplot objects that become the live charts, so the two can
+# never drift apart.
+dir.create("figures", showWarnings = FALSE)
+save_png <- function(p, name, caption = NULL, width = 10.2, height = 5.1) {
+  ggsave(file.path("figures", paste0(name, ".png")),
+         p + labs(caption = caption) + theme_report(base_size = 12),
+         width = width, height = height, dpi = 160, bg = SURFACE)
+  invisible(p)
+}
+```
+
+Every chart in this report is live. Hover any point for its underlying values,
+click a legend entry to hide that series, double-click one to isolate it, and
+drag across a chart to zoom in. The camera icon in the top right of each chart
+saves it as an image.
+
+Every number and figure in this report is produced by the code in this document,
+run against a single input file. The source `.qmd`, the input extract and the
+rendered HTML are in the project repository.
+
+## Introduction and research question {#sec-intro}
+
+**Research question.** How does adult obesity prevalence vary across income levels
+and racial and ethnic groups in the United States, and has that gap widened or
+narrowed between 2011 and 2024?
+
+The data is the CDC's Behavioral Risk Factor Surveillance System (BRFSS), the
+largest continuously running health survey in the world, covering all 50 states,
+the District of Columbia and three territories across fourteen survey years. The
+question matters because public health budgets are finite: if the obesity gap
+between demographic groups is stable, targeting is a permanent requirement rather
+than a temporary correction, and knowing which dimension carries the widest gap
+tells you where a fixed budget buys the most.
+
+The analysis reaches four conclusions.
+
+1. National adult obesity rose from **27.4% to 33.1%** between 2011 and 2024, a
+   5.7 percentage point increase, and the rise is close to linear.
+2. The **race and ethnicity gap is roughly 29 percentage points** and has not
+   moved in fourteen years. It is about three times the income gap and two and a
+   half times the education gap.
+3. The income gap **appears** to have collapsed from 9.5 to 2.7 percentage
+   points. It did not. The apparent collapse is an artefact of a change to the
+   BRFSS income question in 2021, and @sec-break shows the evidence for that
+   directly in the data.
+4. Nothing in the fourteen-year record or in the forecasts to 2030 suggests any
+   of these gaps is closing on its own.
+
+The fourth of those is the finding with the most policy weight. The third is the
+one that would most easily have been reported as a finding by an analysis that
+did not look for it.
+
+## Data loading and initial inspection {#sec-load}
+
+The source is the CDC's *Nutrition, Physical Activity, and Obesity - Behavioral
+Risk Factor Surveillance System* release. The full file carries nine survey
+questions; this analysis uses one, `Q036`, "Percent of adults aged 18 years and
+older who have obesity". The extract in `data/` has already been filtered to that
+question, which is what keeps the repository small enough to be useful.
+
+```{r load}
+RAW_PATH <- "data/brfss_obesity_2011_2024.csv"
+raw <- read_csv(RAW_PATH, col_types = cols(.default = col_character()), progress = FALSE)
+
+inspection <- tibble(
+  Property = c("Rows", "Columns", "Survey years", "Jurisdictions",
+               "Stratification variables", "Rows with no published value"),
+  Value = c(
+    format(nrow(raw), big.mark = ","),
+    as.character(ncol(raw)),
+    paste0(min(raw$YearStart), "-", max(raw$YearStart)),
+    as.character(n_distinct(raw$LocationAbbr)),
+    as.character(n_distinct(raw$StratificationCategory1)),
+    format(sum(is.na(raw$Data_Value)), big.mark = ",")
+  )
+)
+tbl(inspection, caption = "What the extract contains")
+```
+
+Each row is one published estimate: a prevalence rate for one jurisdiction, in one
+year, for one level of one stratification variable. The structure of the file
+matters more than it first appears, and @sec-structure returns to it.
+
+```{r strata}
+strat_overview <- raw |>
+  count(StratificationCategory1, name = "Rows") |>
+  left_join(raw |> distinct(StratificationCategory1, Stratification1) |>
+              count(StratificationCategory1, name = "Levels"),
+            by = "StratificationCategory1") |>
+  rename(`Stratification variable` = StratificationCategory1) |>
+  arrange(desc(Rows))
+tbl(strat_overview, caption = "Rows and levels per stratification variable")
+```
+
+Fifty-five jurisdictions appear rather than fifty-one: the fifty states, the
+District of Columbia, Puerto Rico, Guam, the US Virgin Islands, and a `US` row
+carrying the CDC's own national aggregate. That national row is used throughout
+for national figures, in preference to averaging state estimates, because it is
+weighted to the national population and a simple average of states is not.
+
+Every non-published value in the file carries the same footnote: *"Data not
+available because sample size is insufficient or data not reported."* That is
+2,482 of 21,560 rows, and @sec-quality treats the pattern in those suppressions
+as information rather than as noise.
+
+## Data cleaning and transformation {#sec-clean}
+
+This section is deliberately long. The transformations here are what make
+@sec-eda and @sec-model possible at all: in the raw file, income is text, age is
+text, education is text, and the geographic coordinate is a string. None of that
+can enter a correlation or a model.
+
+### Numeric field fixes
+
+`Sample_Size` arrives comma-formatted (`"1,367"`), so it parses as text and has to
+be stripped before it is a number. `Data_Value` is the prevalence estimate and is
+empty on suppressed rows.
+
+```{r clean-numeric}
+dat <- raw |>
+  transmute(
+    year         = as.integer(YearStart),
+    state_abbr   = LocationAbbr,
+    state        = LocationDesc,
+    strat_cat    = StratificationCategory1,
+    strat_label  = Stratification1,
+    strat_id     = StratificationID1,
+    obesity_rate = as.numeric(Data_Value),
+    ci_low       = as.numeric(Low_Confidence_Limit),
+    ci_high      = as.numeric(High_Confidence_Limit),
+    sample_size  = as.numeric(str_remove_all(Sample_Size, ",")),
+    footnote     = Data_Value_Footnote,
+    geolocation  = GeoLocation
+  )
+```
+
+### Ordinal transformations {#sec-ordinal}
+
+Income, age and education are ordered categories reported as text. Converting them
+to numbers is what lets them enter a correlation, a regression slope or a tree
+split as a *quantity* rather than as a set of unrelated labels.
+
+Two of these conversions rest on assumptions that cannot be verified from the
+data, and both are stated here rather than buried:
+
+- **The top income bracket is open-ended.** "\$75,000 or greater" has no upper
+  bound, so any midpoint is an estimate. It is assigned \$100,000, near the
+  weighted mean of respondents in that band and consistent with the conventional
+  1.3 to 1.4 times lower-bound rule for open-ended income tails.
+- **The top age bracket is open-ended.** "65 or older" is assigned 75 years, close
+  to the mean age of the US adult population above 65.
+
+@sec-sensitivity tests how much the conclusions move when these two numbers are
+changed.
+
+```{r clean-ordinal}
+income_midpoint <- c(
+  INCLESS15 = 7500, INC1525 = 20000, INC2535 = 30000,
+  INC3550 = 42500,  INC5075 = 62500, INC75PLUS = 100000
+)
+# INCNR ("Data not reported") is left NA on purpose: it is a non-response
+# category, not a point on the income scale.
+
+age_midpoint <- c(
+  AGEYR1824 = 21.0, AGEYR2534 = 29.5, AGEYR3544 = 39.5,
+  AGEYR4554 = 49.5, AGEYR5564 = 59.5, AGEYR65PLUS = 75.0
+)
+
+education_rank <- c(EDUHS = 1L, EDUHSGRAD = 2L, EDUCOTEC = 3L, EDUCOGRAD = 4L)
+
+dat <- dat |>
+  mutate(
+    income_midpoint = unname(income_midpoint[strat_id]),
+    age_midpoint    = unname(age_midpoint[strat_id]),
+    education_rank  = unname(education_rank[strat_id])
+  )
+```
+
+### Nominal encoding
+
+Race and ethnicity has no natural order, so it is one-hot encoded rather than
+ranked. Imposing a rank on it would let a linear model read a meaningless slope
+across the categories. Sex is binary.
+
+```{r clean-nominal}
+race_levels <- c("RACEWHT", "RACEBLK", "RACEHIS", "RACEASN",
+                 "RACENAA", "RACEHPI", "RACE2PLUS", "RACEOTH")
+for (lv in race_levels) {
+  dat[[paste0("race_", tolower(sub("RACE", "", lv)))]] <- as.integer(dat$strat_id == lv)
+}
+dat <- dat |>
+  mutate(sex_male = case_when(strat_id == "MALE" ~ 1L, strat_id == "FEMALE" ~ 0L,
+                              TRUE ~ NA_integer_))
+```
+
+### Geographic transformation
+
+`GeoLocation` is a single string of the form `"(32.840571, -86.631861)"`. It is
+split into latitude and longitude, and states are mapped to Census regions, which
+collapses 55 jurisdictions into 4 regions plus territories and reduces the
+cardinality a model has to cope with.
+
+```{r clean-geo}
+dat <- dat |>
+  mutate(
+    .geo = str_match(geolocation, "\\(\\s*(-?[0-9.]+)\\s*,\\s*(-?[0-9.]+)\\s*\\)"),
+    latitude  = as.numeric(.geo[, 2]),
+    longitude = as.numeric(.geo[, 3])
+  ) |>
+  select(-.geo)
+
+northeast <- c("CT","ME","MA","NH","RI","VT","NJ","NY","PA")
+midwest   <- c("IL","IN","MI","OH","WI","IA","KS","MN","MO","NE","ND","SD")
+south     <- c("DE","DC","FL","GA","MD","NC","SC","VA","WV","AL","KY","MS",
+               "TN","AR","LA","OK","TX")
+west      <- c("AZ","CO","ID","MT","NV","NM","UT","WY","AK","CA","HI","OR","WA")
+
+dat <- dat |>
+  mutate(region = case_when(
+    state_abbr %in% northeast ~ "Northeast", state_abbr %in% midwest ~ "Midwest",
+    state_abbr %in% south     ~ "South",     state_abbr %in% west    ~ "West",
+    state_abbr %in% c("PR","GU","VI") ~ "Territory",
+    state_abbr == "US" ~ "National"
+  ) |> factor(levels = c("Northeast","Midwest","South","West","Territory","National")))
+
+stopifnot(!any(is.na(dat$region)))
+```
+
+### Data quality flag and reliability filter {#sec-quality}
+
+A suppressed row is dropped from every calculation, but the *fact* that it was
+suppressed is kept as a binary flag, because where suppression happens is not
+random and is itself a finding.
+
+```{r clean-quality}
+MIN_SAMPLE <- 50
+dat <- dat |>
+  mutate(
+    suppressed = as.integer(!is.na(footnote) | is.na(obesity_rate)),
+    reliable   = as.integer(suppressed == 0 & !is.na(sample_size) & sample_size >= MIN_SAMPLE)
+  )
+
+quality <- tibble(
+  Stage = c("Rows in the extract", "Suppressed by CDC", "Below the sample-size floor",
+            "Reliable rows retained"),
+  Rows = c(nrow(dat), sum(dat$suppressed),
+           sum(dat$suppressed == 0 & dat$reliable == 0), sum(dat$reliable))
+)
+tbl(quality, caption = "What the quality filters remove")
+```
+
+The sample-size filter removes nothing, which is a result worth stating: the CDC
+has already applied a suppression rule at least as strict as a floor of 50. The
+filter stays in the pipeline as a guard, so that a future data refresh with a
+looser rule would be caught rather than silently absorbed.
+
+Where the suppression falls is the more interesting part.
+
+```{r suppression-by-race}
+supp_race <- dat |>
+  filter(strat_cat == "Race/Ethnicity") |>
+  group_by(`Group` = strat_label) |>
+  summarise(`Rows suppressed (%)` = round(100 * mean(suppressed), 1), .groups = "drop") |>
+  left_join(
+    dat |> filter(strat_cat == "Race/Ethnicity", state_abbr == "US", year == 2024) |>
+      transmute(Group = strat_label,
+                `Share of 2024 respondents (%)` = round(100 * sample_size / sum(sample_size), 1)),
+    by = "Group") |>
+  arrange(desc(`Share of 2024 respondents (%)`))
+tbl(supp_race, caption = "Suppression is concentrated in the smallest groups")
+```
+
+Race and ethnicity accounts for 2,101 of the 2,482 suppressed rows. Nine in ten
+state-year estimates for Native Hawaiian and Pacific Islander adults are
+suppressed, and roughly a third for Asian and for American Indian and Alaska
+Native adults. This is not a defect in the data so much as an arithmetic
+consequence of a state-level sample: the groups whose health disparities are
+least visible in the published statistics are the groups the survey is least able
+to measure. Every state-level result involving race in this report is therefore
+built on the three largest groups, and @sec-cluster names the states that drop out
+as a result.
+
+### Retaining the original labels
+
+The readable bracket and the numeric version travel together in the same frame,
+so charts can be labelled "\$75,000 or greater" while models see 100000. Nothing
+downstream has to reverse a transformation to produce a legible axis.
+
+```{r frames}
+analysis <- dat |> filter(reliable == 1, state_abbr != "US")   # states and territories
+national <- dat |> filter(state_abbr == "US", reliable == 1)   # CDC national aggregate
+```
+
+### A structural fact about this data {#sec-structure}
+
+**BRFSS publishes one stratification variable per row.** A row that reports an
+income bracket carries no race, no age, no education and no sex. A row that
+reports a race carries no income. The variables never co-occur.
+
+This is easy to miss and it changes what can honestly be claimed. A conventional
+feature set treating income, race, age, education and sex as simultaneous
+predictors of one outcome cannot be built from this file, because no observation
+holds more than one of them. Nothing here can say what obesity prevalence is among
+low-income Black adults in Alabama; the data reports low-income adults in Alabama
+and Black adults in Alabama, separately.
+
+Two consequences run through the rest of the report. @sec-model encodes each
+variable alongside an explicit "is this variable present on this row" indicator,
+so that a zero means *not applicable* rather than *zero income*. And @sec-discussion
+treats the ecological inference limit as a first-order caveat rather than
+boilerplate.
+
+## Exploratory analysis {#sec-eda}
+
+### The national baseline
+
+```{r fig-national}
+#| label: fig-national
+#| fig-cap: "National adult obesity prevalence, 2011-2024. Source: CDC Behavioral Risk Factor Surveillance System."
+#| fig-height: 4.47
+nat_total <- national |> filter(strat_cat == "Total") |> arrange(year) |>
+  select(year, obesity_rate, ci_low, ci_high, sample_size)
+
+nat_change <- with(nat_total, tibble(
+  start = obesity_rate[year == 2011], end = obesity_rate[year == 2024],
+  abs_change = end - start, rel_change = 100 * (end - start) / start,
+  annual_pp = (end - start) / 13))
+
+g <- ggplot(nat_total, aes(year, obesity_rate, group = 1,
+       text = sprintf("<b>%d</b><br>%.1f%% of adults<br>95%% CI %.1f to %.1f<br>%s respondents",
+                      year, obesity_rate, ci_low, ci_high, comma(sample_size)))) +
+  geom_ribbon(aes(ymin = ci_low, ymax = ci_high), fill = PAL_CAT[1], alpha = 0.16) +
+  geom_line(colour = PAL_CAT[1], linewidth = 0.9) +
+  geom_point(colour = PAL_CAT[1], size = 2.1) +
+  scale_x_continuous(breaks = seq(2011, 2024, 2)) +
+  scale_y_continuous(labels = label_number(suffix = "%"),
+                     breaks = seq(26, 34, 2), limits = c(25, 35)) +
+  labs(title = "US adult obesity prevalence, 2011-2024",
+       subtitle = "CDC BRFSS national estimate, shaded band is the 95% confidence interval",
+       x = NULL, y = NULL)
+
+save_png(g, "readme-national-trend",
+         "Source: CDC Behavioral Risk Factor Surveillance System.")
+gg_live(g, legend = FALSE)
+```
+
+Prevalence rose from `r sprintf("%.1f%%", nat_change$start)` to
+`r sprintf("%.1f%%", nat_change$end)`, an increase of
+`r sprintf("%.1f", nat_change$abs_change)` percentage points, or
+`r sprintf("%.0f%%", nat_change$rel_change)` in relative terms. The average annual
+increase is `r sprintf("%.2f", nat_change$annual_pp)` percentage points and the
+correlation between year and prevalence is
+`r sprintf("%.3f", cor(nat_total$year, nat_total$obesity_rate))`. Confidence
+intervals are narrow throughout, because the annual national sample runs from
+roughly 350,000 to 470,000 respondents. The 2020 and 2023 dips are within the
+noise of a survey conducted partly by telephone during a pandemic; neither breaks
+the trend.
+
+### Income
+
+```{r fig-income-lines}
+#| label: fig-income-lines
+#| fig-cap: "Obesity prevalence by household income bracket. Source: CDC BRFSS national estimates; 'Data not reported' rows excluded."
+#| fig-height: 5.75
+income_order <- c("Less than $15,000", "$15,000 - $24,999", "$25,000 - $34,999",
+                  "$35,000 - $49,999", "$50,000 - $74,999", "$75,000 or greater")
+
+nat_income <- national |>
+  filter(strat_cat == "Income", strat_label %in% income_order) |>
+  mutate(strat_label = factor(strat_label, levels = income_order))
+
+g <- ggplot(nat_income, aes(year, obesity_rate, colour = strat_label,
+       group = strat_label,
+       text = sprintf("<b>%s</b><br>%d: %.1f%%<br>%s respondents",
+                      strat_label, year, obesity_rate, comma(sample_size)))) +
+  geom_line(linewidth = 0.85) + geom_point(size = 1.6) +
+  scale_colour_manual(values = rev(PAL_SEQ[c(1,2,3,5,6,8)])) +
+  scale_x_continuous(breaks = seq(2011, 2024, 2)) + pct_axis() +
+  labs(title = "Obesity prevalence by household income bracket",
+       subtitle = "Darker lines are lower-income brackets; income is ordered, so colour encodes magnitude",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+The ordering is what you would expect and it holds in every year: lower income,
+higher obesity. What is not expected is the jump in the lightest line between
+2020 and 2021. Hold that thought until @sec-break.
+
+The transformation in @sec-ordinal makes it possible to plot prevalence against
+income as a number rather than as a set of labels.
+
+```{r fig-income-scatter}
+#| label: fig-income-scatter
+#| fig-cap: "Obesity rate against the transformed income midpoint. Source: CDC BRFSS state-level estimates, 2011-2024; line is an OLS fit with a 95% interval."
+#| fig-height: 4.88
+inc_scatter <- analysis |> filter(strat_cat == "Income", !is.na(income_midpoint))
+income_lm <- lm(obesity_rate ~ income_midpoint, data = inc_scatter)
+
+g <- ggplot(inc_scatter, aes(income_midpoint, obesity_rate,
+       text = sprintf("<b>%s, %d</b><br>%s<br>%.1f%% obese<br>%s respondents",
+                      state, year, strat_label, obesity_rate, comma(sample_size)))) +
+  geom_point(alpha = 0.11, size = 1.1, colour = PAL_CAT[1]) +
+  geom_smooth(aes(text = NULL), method = "lm", formula = y ~ x, se = TRUE,
+              colour = PAL_CAT[2], fill = PAL_CAT[2], linewidth = 0.9, alpha = 0.2) +
+  scale_x_continuous(labels = label_dollar(scale = 1e-3, suffix = "k")) + pct_axis() +
+  labs(title = "Obesity rate against the transformed income midpoint",
+       subtitle = "One point per state-year-bracket; the transformation is what makes this plot possible",
+       x = "Income bracket midpoint", y = NULL)
+
+gg_live(g, legend = FALSE)
+```
+
+The points fall into six vertical strips because income is bracketed, not
+continuous: the transformation gives the variable a scale, it does not give it
+resolution it never had. The fitted slope is
+`r sprintf("%.2f", coef(income_lm)[2] * 10000)` percentage points per additional
+\$10,000 of bracket midpoint, with a residual spread that is far larger than the
+slope. Income is a real but weak predictor at this level of aggregation, which
+@sec-model quantifies properly.
+
+### Race and ethnicity
+
+Eight groups is more than one line chart can carry legibly, and the groups are not
+equally measurable. The four largest cover 95% of respondents and are almost never
+suppressed; the four smallest are volatile enough that year-to-year movement is
+mostly sampling noise. The breakdown is split accordingly.
+
+```{r fig-race-big4}
+#| label: fig-race-big4
+#| fig-cap: "The four largest race and ethnicity groups. Source: CDC BRFSS national estimates. Race is nominal, so it keeps categorical colour rather than a ranked ramp."
+#| fig-height: 5.54
+nat_race <- national |> filter(strat_cat == "Race/Ethnicity")
+big4 <- c("Non-Hispanic Black", "Hispanic", "Non-Hispanic White", "Non-Hispanic Asian")
+nat_race4 <- nat_race |> filter(strat_label %in% big4) |>
+  mutate(strat_label = factor(strat_label, levels = big4))
+
+g <- ggplot(nat_race4, aes(year, obesity_rate, colour = strat_label,
+       group = strat_label,
+       text = sprintf("<b>%s</b><br>%d: %.1f%%<br>%s respondents",
+                      strat_label, year, obesity_rate, comma(sample_size)))) +
+  geom_line(linewidth = 0.95) + geom_point(size = 1.6) +
+  scale_colour_manual(values = PAL_CAT[1:4]) +
+  scale_x_continuous(breaks = seq(2011, 2024, 2)) +
+  pct_axis(limits = c(5, 45)) +
+  labs(title = "The four largest race and ethnicity groups, 95% of respondents",
+       subtitle = "Every group rose over the period; the ordering never changed, and the spread never closed",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+Every group rose. The rank order never changed. The distance between the top line
+and the bottom line in 2024 is almost exactly what it was in 2011.
+
+```{r fig-race-panels}
+#| label: fig-race-panels
+#| fig-cap: "All eight groups, each against the other seven. Source: CDC BRFSS national estimates. Grey lines repeat all eight series in every panel for reference."
+#| fig-height: 5.2
+small4 <- setdiff(unique(as.character(nat_race$strat_label)), big4)
+race_panel <- nat_race |>
+  mutate(panel = factor(strat_label, levels = c(big4, small4),
+                        labels = str_wrap(c(big4, small4), 17)))
+backdrop <- nat_race |> select(year, obesity_rate, g = strat_label)
+
+g <- ggplot(race_panel, aes(year, obesity_rate, group = 1,
+       text = sprintf("<b>%s</b><br>%d: %.1f%%<br>%s respondents",
+                      strat_label, year, obesity_rate, comma(sample_size)))) +
+  geom_line(data = backdrop, aes(group = g, text = NULL), colour = GRID, linewidth = 0.5) +
+  geom_line(colour = PAL_CAT[1], linewidth = 0.9) +
+  geom_point(colour = PAL_CAT[1], size = 0.9) +
+  facet_wrap(~ panel, ncol = 4) +
+  scale_x_continuous(breaks = c(2012, 2018, 2024)) + pct_axis() +
+  labs(title = "All eight groups, each against the other seven",
+       subtitle = "The four smaller groups on the bottom row are frequently suppressed and move erratically",
+       x = NULL, y = NULL)
+
+gg_live(g, legend = FALSE, muted = GRID)
+```
+
+### Age
+
+The age midpoints from @sec-ordinal turn a set of six labels into a curve, and the
+curve has a shape that a categorical treatment would have hidden.
+
+```{r fig-age}
+#| label: fig-age
+#| fig-cap: "Obesity against age, one line per survey year. Source: CDC BRFSS national estimates. The 65+ midpoint is an assumption; see the sensitivity check."
+#| fig-height: 5.75
+nat_age <- national |> filter(strat_cat == "Age (years)", !is.na(age_midpoint))
+age_lin  <- lm(obesity_rate ~ age_midpoint, data = nat_age)
+age_quad <- lm(obesity_rate ~ age_midpoint + I(age_midpoint^2), data = nat_age)
+
+g <- ggplot(nat_age, aes(age_midpoint, obesity_rate,
+       colour = factor(year), group = year,
+       text = sprintf("<b>%d</b><br>Age %s: %.1f%%<br>%s respondents",
+                      year, strat_label, obesity_rate, comma(sample_size)))) +
+  geom_line(linewidth = 0.7) + geom_point(size = 1.4) +
+  scale_colour_manual(values = colorRampPalette(PAL_SEQ)(14)) +
+  scale_x_continuous(breaks = c(21, 29.5, 39.5, 49.5, 59.5, 75),
+                     labels = c("18-24","25-34","35-44","45-54","55-64","65+")) +
+  pct_axis() +
+  labs(title = "Obesity peaks in middle age and falls after 65",
+       subtitle = "Each line is one survey year; click a year in the legend to hide it, or double-click to isolate it",
+       x = "Age bracket (plotted at its numeric midpoint)", y = NULL)
+
+gg_live(g)
+```
+
+A straight line through this relationship explains
+`r sprintf("%.0f%%", 100 * summary(age_lin)$r.squared)` of the variance. Adding a
+quadratic term takes that to
+`r sprintf("%.0f%%", 100 * summary(age_quad)$r.squared)`. The relationship is not
+linear and any model that treats it as linear will be wrong at both ends. The
+decline after 65 is well documented and is partly survivorship and partly the
+weight loss that accompanies illness in older adults, so it should not be read as
+older adults being healthier.
+
+### The disparity gaps {#sec-gaps}
+
+The gap for a dimension in a year is the highest group prevalence minus the
+lowest. It is a crude measure and a legible one.
+
+```{r gaps}
+gap_series <- function(df, cat, keep = NULL) {
+  d <- df |> filter(strat_cat == cat)
+  if (!is.null(keep)) d <- d |> filter(strat_label %in% keep)
+  d |> group_by(year) |>
+    summarise(high = max(obesity_rate), low = min(obesity_rate),
+              high_label = strat_label[which.max(obesity_rate)],
+              low_label  = strat_label[which.min(obesity_rate)],
+              gap = high - low, .groups = "drop") |>
+    mutate(dimension = cat)
+}
+
+gaps <- bind_rows(
+  gap_series(national, "Income", keep = income_order),
+  gap_series(national, "Race/Ethnicity"),
+  gap_series(national, "Education")
+) |> mutate(dimension = recode(dimension, "Race/Ethnicity" = "Race / ethnicity"))
+
+gap_summary <- gaps |>
+  group_by(Dimension = dimension) |>
+  summarise(`Gap 2011` = gap[year == 2011], `Gap 2024` = gap[year == 2024],
+            Change = `Gap 2024` - `Gap 2011`,
+            `Mean gap` = round(mean(gap), 1),
+            `Trend (pp/yr)` = round(coef(lm(gap ~ year))[2], 3), .groups = "drop") |>
+  arrange(desc(`Mean gap`))
+tbl(gap_summary, caption = "Disparity gaps by dimension, percentage points")
+```
+
+```{r fig-gaps}
+#| label: fig-gaps
+#| fig-cap: "Disparity gaps over time. The dashed line marks the 2021 income question redesign. Source: CDC BRFSS national estimates; the income drop after 2020 is an instrument artefact, not a convergence."
+#| fig-height: 5.54
+g <- ggplot(gaps, aes(year, gap, colour = dimension, group = dimension,
+       text = sprintf("<b>%s, %d</b><br>Gap: %.1f pp<br>%s %.1f%%<br>%s %.1f%%",
+                      dimension, year, gap, high_label, high, low_label, low))) +
+  geom_vline(xintercept = 2020.5, linetype = "22", colour = INK_MUTED, linewidth = 0.5) +
+  geom_line(linewidth = 0.95) + geom_point(size = 1.7) +
+  scale_colour_manual(values = PAL_CAT[1:3]) +
+  scale_x_continuous(breaks = seq(2011, 2024, 2)) +
+  scale_y_continuous(labels = label_number(suffix = " pp"), limits = c(0, 33)) +
+  labs(title = "The race and ethnicity gap is three times the income gap and is not closing",
+       subtitle = "Highest minus lowest group prevalence within each dimension. Dashed line marks the 2021 income question redesign",
+       x = NULL, y = NULL)
+
+save_png(g, "readme-gap-trends",
+         "Source: CDC BRFSS national estimates. The income drop after 2020 is an instrument artefact, not a convergence.")
+gg_live(g)
+```
+
+```{r gap-endpoints}
+endpoints <- gaps |> filter(year %in% c(2011, 2024)) |>
+  transmute(Dimension = dimension, Year = year,
+            `Highest group` = as.character(high_label), `Rate` = high,
+            `Lowest group` = as.character(low_label), ` Rate` = low, Gap = gap) |>
+  arrange(Dimension, Year)
+tbl(endpoints, caption = "Which groups define each gap")
+```
+
+The race and ethnicity gap sits near 29 percentage points for all fourteen years.
+It is worth being precise about what drives it. The gap runs from Non-Hispanic
+Black adults at the top to Non-Hispanic Asian adults at the bottom, and Asian
+prevalence is far below every other group.
+
+```{r race-decomp}
+race_decomp <- national |> filter(strat_cat == "Race/Ethnicity") |>
+  group_by(Year = year) |>
+  summarise(
+    `All eight groups` = max(obesity_rate) - min(obesity_rate),
+    `Excluding Asian adults` =
+      max(obesity_rate[strat_label %in% setdiff(big4, "Non-Hispanic Asian")]) -
+      min(obesity_rate[strat_label %in% setdiff(big4, "Non-Hispanic Asian")]),
+    .groups = "drop") |>
+  filter(Year %in% c(2011, 2015, 2020, 2024))
+tbl(race_decomp, caption = "The race gap with and without the lowest group")
+```
+
+Removing Asian adults from the calculation cuts the gap from about 29 points to
+about 10. Both numbers are true and they answer different questions. The 29-point
+figure is the full range of outcomes across racial and ethnic groups in the United
+States. The 10-point figure is the gap among the three largest groups, and it is
+the one that is comparable in scale to the education gap. Reporting only the
+larger number without saying what drives it would be misleading; reporting only
+the smaller one would drop the group with the best health outcome from the
+picture entirely.
+
+### Correlations {#sec-corr}
+
+Correlations are computed within the stratum each variable belongs to. A single
+pooled correlation matrix across income, age and education would be built on
+non-overlapping cases, for the reason set out in @sec-structure, and would not
+mean anything.
+
+```{r correlations}
+cor_one <- function(df, var, cat, label) {
+  d <- df |> filter(strat_cat == cat, !is.na(.data[[var]]))
+  tibble(Variable = label, n = nrow(d),
+         Pearson  = round(cor(d[[var]], d$obesity_rate), 3),
+         Spearman = round(cor(d[[var]], d$obesity_rate, method = "spearman"), 3),
+         `p-value` = format.pval(cor.test(d[[var]], d$obesity_rate)$p.value, digits = 2))
+}
+
+correlations <- bind_rows(
+  cor_one(analysis, "education_rank",  "Education",   "Education rank"),
+  cor_one(analysis, "income_midpoint", "Income",      "Income midpoint"),
+  cor_one(analysis, "age_midpoint",    "Age (years)", "Age midpoint"),
+  tibble(Variable = "Year (national total)", n = nrow(nat_total),
+         Pearson = round(cor(nat_total$year, nat_total$obesity_rate), 3),
+         Spearman = round(cor(nat_total$year, nat_total$obesity_rate, method = "spearman"), 3),
+         `p-value` = format.pval(cor.test(nat_total$year, nat_total$obesity_rate)$p.value, digits = 2))
+) |> arrange(Pearson)
+tbl(correlations, caption = "Correlation with obesity prevalence, computed within stratum")
+```
+
+Education is the strongest of the three demographic correlations at
+`r sprintf("%.2f", correlations$Pearson[correlations$Variable == "Education rank"])`,
+ahead of income at
+`r sprintf("%.2f", correlations$Pearson[correlations$Variable == "Income midpoint"])`.
+Pearson and Spearman agree closely in every case, so the relationships are
+monotone and not driven by a handful of extreme values. The age correlation is
+positive and moderate, which understates the relationship because it is fitting a
+straight line to the curve in @fig-age.
+
+### Regional patterns
+
+```{r fig-region}
+#| label: fig-region
+#| fig-cap: "Obesity by Census region. Source: CDC BRFSS; territories excluded from the regional cut."
+#| fig-height: 5.44
+reg_total <- analysis |>
+  filter(strat_cat == "Total", region %in% c("Northeast","Midwest","South","West")) |>
+  group_by(region, year) |>
+  summarise(obesity_rate = weighted.mean(obesity_rate, sample_size),
+            n_states = n(), .groups = "drop") |>
+  mutate(region = fct_reorder(region, -obesity_rate))
+
+g <- ggplot(reg_total, aes(year, obesity_rate, colour = region, group = region,
+       text = sprintf("<b>%s, %d</b><br>%.1f%%<br>%d jurisdictions",
+                      region, year, obesity_rate, n_states))) +
+  geom_line(linewidth = 0.95) + geom_point(size = 1.6) +
+  scale_colour_manual(values = PAL_CAT[1:4]) +
+  scale_x_continuous(breaks = seq(2011, 2024, 2)) + pct_axis() +
+  labs(title = "Obesity by Census region",
+       subtitle = "Sample-size weighted mean of state estimates, collapsing 54 jurisdictions into four regions",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+The South is the region usually named in this context, but by 2024 the Midwest is
+marginally higher, at
+`r sprintf("%.1f%%", reg_total$obesity_rate[reg_total$region == "Midwest" & reg_total$year == 2024])`
+against
+`r sprintf("%.1f%%", reg_total$obesity_rate[reg_total$region == "South" & reg_total$year == 2024])`.
+The Northeast and West track each other closely about five points below.
+
+### A discontinuity in the income series {#sec-break}
+
+Something changed in the income data in 2021, and it is large enough that any
+finding about income trends is wrong unless it is accounted for.
+
+`Sample_Size` is usually treated as a reliability weight. It is also, within a
+stratification category, a rough census of how respondents were classified. A
+sudden change in the composition of a category is therefore a signal that the
+survey instrument changed rather than that the population did.
+
+```{r fig-comp-shift}
+#| label: fig-comp-shift
+#| fig-cap: "Largest year-on-year composition shift in each stratification variable. The 2021 income spike is the question redesign. Source: CDC BRFSS national Sample_Size fields; a shift of this size is an instrument change, not a population change."
+#| fig-height: 5.54
+composition <- national |>
+  group_by(strat_cat, year) |> mutate(share = 100 * sample_size / sum(sample_size)) |> ungroup()
+
+comp_shift <- composition |>
+  arrange(strat_cat, strat_label, year) |>
+  group_by(strat_cat, strat_label) |> mutate(d_share = share - lag(share)) |> ungroup() |>
+  filter(!is.na(d_share)) |>
+  group_by(strat_cat, year) |>
+  summarise(max_abs_shift = max(abs(d_share)),
+            moved = strat_label[which.max(abs(d_share))], .groups = "drop")
+
+g <- ggplot(filter(comp_shift, strat_cat != "Total"),
+       aes(year, max_abs_shift, colour = strat_cat, group = strat_cat,
+           text = sprintf("<b>%s, %d</b><br>Largest shift: %.1f pp<br>Level that moved: %s",
+                          strat_cat, year, max_abs_shift, moved))) +
+  geom_line(linewidth = 0.85) + geom_point(size = 1.6) +
+  scale_colour_manual(values = PAL_CAT[1:5]) +
+  scale_x_continuous(breaks = seq(2012, 2024, 2)) +
+  scale_y_continuous(labels = label_number(suffix = " pp")) +
+  labs(title = "One variable changed; the other four did not",
+       subtitle = "Largest year-on-year shift in the share of respondents falling into any level of each variable",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+In 2021, the income composition moved by 22.5 percentage points in a single year.
+No other stratification variable moves by more than 2.1 points in any year of the
+series, and the income variable's own largest move in any other year is 2.2
+points. The 2021 figure is an order of magnitude outside the range of everything
+else in the file. This is not a population changing; it is a question changing.
+
+```{r fig-income-comp}
+#| label: fig-income-comp
+#| fig-cap: "Where the top income bracket went in 2021. Source: CDC BRFSS national estimates; the dashed line marks the break between the 2020 and 2021 instruments."
+#| fig-height: 5.54
+income_comp <- composition |> filter(strat_cat == "Income") |>
+  mutate(grp = case_when(strat_label == "Data not reported"  ~ "Income not reported",
+                         strat_label == "$75,000 or greater" ~ "$75,000 or greater",
+                         TRUE ~ "All other brackets")) |>
+  group_by(grp, year) |> summarise(share = sum(share), .groups = "drop")
+
+g <- ggplot(income_comp, aes(year, share, colour = grp, group = grp,
+       text = sprintf("<b>%s</b><br>%d: %.1f%% of respondents", grp, year, share))) +
+  geom_vline(xintercept = 2020.5, linetype = "22", colour = INK_MUTED, linewidth = 0.5) +
+  geom_line(linewidth = 0.95) + geom_point(size = 1.6) +
+  scale_colour_manual(values = PAL_CAT[1:3]) +
+  scale_x_continuous(breaks = seq(2011, 2024, 2)) +
+  scale_y_continuous(labels = label_number(suffix = "%")) +
+  labs(title = "Where the top income bracket went in 2021",
+       subtitle = "Share of national respondents by income classification, before and after the instrument change",
+       x = NULL, y = NULL)
+
+save_png(g, "readme-income-break",
+         "Source: CDC BRFSS national estimates. Dashed line marks the break between the 2020 and 2021 instruments.")
+gg_live(g)
+```
+
+The mechanism is visible directly. The share of respondents classified as
+"\$75,000 or greater" falls from 31.6% in 2020 to 11.6% in 2021, while the share
+classified as "income not reported" rises from 16.1% to 38.5%. BRFSS replaced its
+income question in 2021 with a version carrying finer brackets above \$75,000, and
+respondents in those new higher brackets have no equivalent in the old scheme, so
+they land outside the comparable categories.
+
+The consequence for this analysis is direct. After 2020, "\$75,000 or greater" is
+no longer the top of the income distribution: it has lost its most affluent and
+lowest-obesity members. That is why its measured prevalence jumps from 29.0% to
+33.7% in a single year, and that is why the income gap appears to collapse.
+
+```{r income-regimes}
+gap_inc <- gaps |> filter(dimension == "Income") |> arrange(year)
+income_regimes <- tibble(
+  Regime = c("2011-2020, original instrument", "2021-2024, revised instrument"),
+  Years = c(10, 4),
+  `Gap at start` = c(gap_inc$gap[gap_inc$year == 2011], gap_inc$gap[gap_inc$year == 2021]),
+  `Gap at end`   = c(gap_inc$gap[gap_inc$year == 2020], gap_inc$gap[gap_inc$year == 2024]),
+  `Trend (pp/yr)` = round(c(coef(lm(gap ~ year, filter(gap_inc, year <= 2020)))[2],
+                            coef(lm(gap ~ year, filter(gap_inc, year >= 2021)))[2]), 3)
+)
+tbl(income_regimes, caption = "The income gap, estimated separately either side of the break")
+```
+
+Read across the break, the income gap fell from 9.5 to 2.7 points and the obvious
+headline is that America's income-based obesity disparity has almost disappeared.
+Read within the original instrument, the gap fell from 9.5 to 8.9 points over ten
+years, a decline of `r sprintf("%.2f", abs(coef(lm(gap ~ year, filter(gap_inc, year <= 2020)))[2]))`
+points a year that would take roughly sixty years to close. Those are different
+findings and only one of them is about incomes.
+
+### Sensitivity to the transformation assumptions {#sec-sensitivity}
+
+@sec-ordinal assigned \$100,000 to the open-ended top income bracket and 75 years
+to the open-ended top age bracket. Both are estimates. The check below refits the
+two headline relationships across a plausible range for each.
+
+```{r sensitivity}
+sens_income <- map_dfr(c(85000, 100000, 120000, 150000), function(v) {
+  mid <- income_midpoint; mid["INC75PLUS"] <- v
+  d <- analysis |> filter(strat_cat == "Income", strat_id != "INCNR") |>
+    mutate(im = unname(mid[strat_id]))
+  tibble(`Top bracket midpoint` = label_dollar()(v),
+         `Slope per $10k` = round(coef(lm(obesity_rate ~ im, d))[2] * 10000, 3),
+         `Pearson r` = round(cor(d$im, d$obesity_rate), 3))
+})
+tbl(sens_income, caption = "Income relationship under different open-ended midpoints")
+
+sens_age <- map_dfr(c(70, 72, 75, 78), function(v) {
+  mid <- age_midpoint; mid["AGEYR65PLUS"] <- v
+  d <- national |> filter(strat_cat == "Age (years)") |> mutate(am = unname(mid[strat_id]))
+  tibble(`65+ midpoint` = v,
+         `Linear R2` = round(summary(lm(obesity_rate ~ am, d))$r.squared, 3),
+         `Quadratic R2` = round(summary(lm(obesity_rate ~ am + I(am^2), d))$r.squared, 3))
+})
+tbl(sens_age, caption = "Age relationship under different open-ended midpoints")
+```
+
+The income slope changes in magnitude across the range, because widening the top
+bracket's midpoint stretches the x-axis, but the correlation is stable and the
+sign and significance never change. The age result is stable throughout: the
+quadratic fit beats the linear one by a wide margin at every midpoint tried. No
+conclusion in this report depends on either assumption.
+
+## Predictive modelling {#sec-model}
+
+### Feature set
+
+Following @sec-structure, each demographic variable is paired with an indicator
+saying whether it is present on that row. Without those indicators a tree would
+have to read a zero in `income_midpoint` as a household earning nothing.
+
+```{r model-frame}
+race_cols <- grep("^race_", names(analysis), value = TRUE)
+
+model_df <- analysis |>
+  mutate(
+    has_income = as.integer(!is.na(income_midpoint)),
+    has_age = as.integer(!is.na(age_midpoint)),
+    has_education = as.integer(!is.na(education_rank)),
+    has_sex = as.integer(!is.na(sex_male)),
+    has_race = as.integer(strat_cat == "Race/Ethnicity"),
+    is_total = as.integer(strat_cat == "Total"),
+    income_midpoint = coalesce(income_midpoint, 0),
+    age_midpoint    = coalesce(age_midpoint, 0),
+    education_rank  = coalesce(as.numeric(education_rank), 0),
+    sex_male        = coalesce(as.numeric(sex_male), 0),
+    post_2021       = as.integer(year >= 2021)
+  ) |>
+  select(obesity_rate, year, post_2021, region, income_midpoint, has_income,
+         age_midpoint, has_age, education_rank, has_education, sex_male, has_sex,
+         all_of(race_cols), has_race, is_total, latitude, longitude,
+         state_abbr, strat_cat) |>
+  filter(!is.na(latitude), !is.na(longitude))
+
+feature_cols <- setdiff(names(model_df), c("obesity_rate", "state_abbr", "strat_cat"))
+```
+
+The frame carries `r format(nrow(model_df), big.mark = ",")` rows and
+`r length(feature_cols)` features.
+
+### Two train and test splits
+
+A single random split answers only how well the model interpolates inside the
+period it has already seen. The temporal split is the harder question and the one
+that matters if the model is ever pointed at a future year.
+
+```{r fit-models}
+n_rows <- nrow(model_df)
+idx <- sample.int(n_rows, size = floor(0.75 * n_rows))
+splits <- list(
+  `Random 75/25 rows` = list(train = model_df[idx, ], test = model_df[-idx, ]),
+  `Temporal: train to 2021, test 2022-2024` =
+    list(train = filter(model_df, year <= 2021), test = filter(model_df, year >= 2022))
+)
+
+metrics <- function(actual, pred) {
+  r <- actual - pred
+  tibble(R2 = 1 - sum(r^2) / sum((actual - mean(actual))^2),
+         RMSE = sqrt(mean(r^2)), MAE = mean(abs(r)))
+}
+
+fit_all <- function(split, label) {
+  tr <- split$train; te <- split$test
+  form <- reformulate(feature_cols, response = "obesity_rate")
+  m_lm  <- lm(form, data = tr)
+  m_rf  <- ranger(form, data = tr, num.trees = 600, mtry = 6, min.node.size = 5,
+                  importance = "permutation", seed = 20260902, num.threads = 2)
+  m_gbm <- gbm(form, data = tr, distribution = "gaussian", n.trees = 1500,
+               interaction.depth = 4, shrinkage = 0.05, bag.fraction = 0.8,
+               train.fraction = 0.8, n.minobsinnode = 10, verbose = FALSE)
+  best_iter <- gbm.perf(m_gbm, method = "test", plot.it = FALSE)
+  preds <- list(`Linear regression` = predict(m_lm, newdata = te),
+                `Random forest`     = predict(m_rf, data = te)$predictions,
+                `Gradient boosting` = predict(m_gbm, newdata = te, n.trees = best_iter))
+  list(results = imap_dfr(preds, ~ metrics(te$obesity_rate, .x) |> mutate(Model = .y)) |>
+         mutate(Split = label, n_train = nrow(tr), n_test = nrow(te)),
+       lm = m_lm, rf = m_rf, gbm = m_gbm, best_iter = best_iter, test = te, preds = preds)
+}
+
+fits <- imap(splits, fit_all)
+eval_tbl <- bind_rows(map(fits, "results")) |>
+  transmute(Split, Model, R2 = round(R2, 3), RMSE = round(RMSE, 3), MAE = round(MAE, 3),
+            `Train rows` = n_train, `Test rows` = n_test) |>
+  arrange(Split, desc(R2))
+tbl(eval_tbl, caption = "Model comparison on both splits")
+```
+
+Gradient boosting wins the random split with an R-squared of
+`r eval_tbl$R2[eval_tbl$Split == "Random 75/25 rows"][1]`. The random forest wins
+the temporal split. That reversal is informative rather than incidental: boosting
+extracts more from patterns inside the observed period and gives some of it back
+when asked about years it has not seen, while the forest is more conservative and
+holds up better out of sample. Every model loses roughly 10 to 15 points of
+R-squared moving from the random split to the temporal one, which is the honest
+cost of extrapolating in time.
+
+The linear baseline is far behind both, at
+`r eval_tbl$R2[eval_tbl$Model == "Linear regression" & eval_tbl$Split == "Random 75/25 rows"]`
+on the random split. Given the curved age relationship in @fig-age and the
+interaction between state and demographic group, that is expected.
+
+```{r fig-pred-actual}
+#| label: fig-pred-actual
+#| fig-cap: "Predicted against actual for the best model on the random split, coloured by which stratification variable the row belongs to. Source: CDC BRFSS; points are state-year-stratum observations."
+#| fig-height: 6.37
+best_name <- eval_tbl |> filter(Split == "Random 75/25 rows") |> slice(1) |> pull(Model)
+fr <- fits[["Random 75/25 rows"]]
+pv <- tibble(actual = fr$test$obesity_rate, predicted = fr$preds[[best_name]],
+             stratum = fr$test$strat_cat, state = fr$test$state_abbr,
+             year = fr$test$year)
+
+g <- ggplot(pv, aes(actual, predicted, colour = stratum,
+       text = sprintf("<b>%s, %d</b><br>Stratum: %s<br>Actual %.1f%%, predicted %.1f%%<br>Error %+.1f pp",
+                      state, year, stratum, actual, predicted, predicted - actual))) +
+  geom_abline(slope = 1, intercept = 0, colour = INK_MUTED, linetype = "22") +
+  geom_point(alpha = 0.35, size = 1.1) +
+  scale_colour_manual(values = PAL_CAT[1:6]) +
+  scale_x_continuous(labels = label_number(suffix = "%")) +
+  scale_y_continuous(labels = label_number(suffix = "%")) +
+  labs(title = paste0("Predicted against actual, ", tolower(best_name)),
+       subtitle = "Held-out 25% of rows. The dashed line is perfect prediction; isolate a stratum by double-clicking its legend entry",
+       x = "Actual obesity rate", y = "Predicted")
+
+gg_live(g)
+```
+
+```{r resid-stratum}
+resid_stratum <- pv |> mutate(r = actual - predicted) |>
+  group_by(Stratum = stratum) |>
+  summarise(n = n(), MAE = round(mean(abs(r)), 2), Bias = round(mean(r), 2), .groups = "drop") |>
+  arrange(desc(MAE))
+tbl(resid_stratum, caption = "Where the error is concentrated")
+```
+
+The error is not spread evenly. Race and ethnicity rows carry roughly four times
+the mean absolute error of `Total` rows. The model is worst precisely where the
+underlying estimates are least precise, which is the same small-sample problem
+documented in @sec-quality showing up a second time.
+
+### Feature importance {#sec-importance}
+
+```{r fig-importance}
+#| label: fig-importance
+#| fig-cap: "Grouped permutation importance from the random forest."
+#| fig-height: 4.68
+imp_raw <- tibble(feature = names(ranger::importance(fr$rf)),
+                  importance = as.numeric(ranger::importance(fr$rf)))
+
+group_feature <- function(f) case_when(
+  str_starts(f, "race_") | f == "has_race" ~ "Race / ethnicity",
+  f %in% c("income_midpoint","has_income") ~ "Income (midpoint)",
+  f %in% c("age_midpoint","has_age") ~ "Age (midpoint)",
+  f %in% c("education_rank","has_education") ~ "Education (rank)",
+  f %in% c("sex_male","has_sex") ~ "Sex",
+  f %in% c("latitude","longitude") ~ "Geography (lat/long)",
+  f == "region" ~ "Census region",
+  f %in% c("year","post_2021") ~ "Year",
+  f == "is_total" ~ "Stratum is 'Total'", TRUE ~ f)
+
+imp_grouped <- imp_raw |> mutate(group = group_feature(feature)) |>
+  group_by(group) |> summarise(importance = sum(importance), .groups = "drop") |>
+  mutate(share = 100 * importance / sum(importance)) |> arrange(desc(importance))
+
+g <- ggplot(mutate(imp_grouped, group = fct_reorder(group, importance)),
+       aes(importance, group,
+           text = sprintf("<b>%s</b><br>%.1f%% of total importance<br>MSE increase when permuted: %.1f",
+                          group, share, importance))) +
+  geom_col(fill = PAL_CAT[1], width = 0.62) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.06))) +
+  labs(title = "What the random forest actually leans on",
+       subtitle = "Permutation importance, with the eight one-hot race columns summed back into one contribution",
+       x = "Increase in MSE when the feature is permuted", y = NULL)
+
+gg_live(g, legend = FALSE)
+```
+
+Race and ethnicity is the largest single contributor at
+`r sprintf("%.0f%%", imp_grouped$share[1])` of total importance, ahead of age at
+`r sprintf("%.0f%%", imp_grouped$share[2])`. Income is well down the list. The
+gradient boosting model, which computes importance by a different mechanism,
+produces the same ordering, which is worth checking because permutation importance
+on correlated features can be unstable.
+
+```{r gbm-importance}
+gbm_inf <- summary(fr$gbm, n.trees = fr$best_iter, plotit = FALSE) |>
+  as_tibble() |> mutate(group = group_feature(as.character(var))) |>
+  group_by(Feature = group) |>
+  summarise(`Relative influence (%)` = round(sum(rel.inf), 1), .groups = "drop") |>
+  arrange(desc(`Relative influence (%)`))
+tbl(gbm_inf, caption = "Gradient boosting relative influence, as a cross-check")
+```
+
+### A cleaner test of which factor matters most {#sec-incremental}
+
+The ranking above answers the outline's question, but it should be read with one
+reservation. Because a race row carries `income_midpoint = 0` and
+`has_income = 0`, the model can read the row type off the features, and part of
+what looks like the importance of a variable is really the importance of knowing
+which kind of row it is.
+
+The comparison below removes that. Within each stratification category
+separately, a baseline model is fitted that knows only where and when the
+observation was taken. The demographic variable is then added and the increase in
+R-squared recorded. Every model is fitted on rows of one kind only, so the
+increments are comparable.
+
+```{r fig-incremental}
+#| label: fig-incremental
+#| fig-cap: "Variance explained by each demographic dimension, state and year held fixed."
+#| fig-height: 4.36
+incremental_r2 <- function(cat, demo, label) {
+  d <- analysis |> filter(strat_cat == cat)
+  base <- lm(obesity_rate ~ factor(year) + factor(state_abbr), data = d)
+  full <- lm(reformulate(c("factor(year)", "factor(state_abbr)", demo),
+                         response = "obesity_rate"), data = d)
+  tibble(dimension = label, n = nrow(d),
+         r2_baseline = summary(base)$r.squared,
+         r2_with_demo = summary(full)$r.squared,
+         incremental = summary(full)$r.squared - summary(base)$r.squared)
+}
+
+incr <- bind_rows(
+  incremental_r2("Age (years)",    "poly(age_midpoint, 2)", "Age"),
+  incremental_r2("Race/Ethnicity", "strat_label",           "Race / ethnicity"),
+  incremental_r2("Education",      "education_rank",        "Education"),
+  incremental_r2("Income",         "income_midpoint",       "Income"),
+  incremental_r2("Sex",            "sex_male",              "Sex")
+) |> arrange(desc(incremental))
+
+g <- ggplot(mutate(incr, dimension = fct_reorder(dimension, incremental)),
+       aes(incremental, dimension,
+           text = sprintf("<b>%s</b><br>Adds %.1f%% explained variance<br>Baseline R2 %.3f, with demographic %.3f<br>%s rows",
+                          dimension, 100 * incremental, r2_baseline, r2_with_demo,
+                          comma(n)))) +
+  geom_col(fill = PAL_CAT[1], width = 0.62) +
+  scale_x_continuous(labels = label_percent(), expand = expansion(mult = c(0, 0.06))) +
+  labs(title = "Which dimension explains the most, holding state and year fixed",
+       subtitle = "Extra R-squared when the demographic variable is added to a state-and-year baseline, fitted within each stratum",
+       x = "Additional variance explained", y = NULL)
+
+save_png(g + geom_text(aes(label = sprintf("%.0f%%", 100 * incremental)),
+                       hjust = -0.2, size = 3.4, colour = INK_SECONDARY),
+         "readme-what-matters",
+         "Source: CDC BRFSS state-level estimates, 2011-2024. Each row type is modelled separately, so the figures are comparable.",
+         height = 4.4)
+gg_live(g, legend = FALSE)
+```
+
+```{r incremental-table}
+tbl(incr |> transmute(Dimension = dimension, n,
+                      `Baseline R2` = round(r2_baseline, 3),
+                      `With demographic` = round(r2_with_demo, 3),
+                      `Increment` = round(incremental, 3)),
+    caption = "Incremental variance explained, within stratum")
+```
+
+Age and race are close and both are far ahead of the rest. Age explains
+`r sprintf("%.0f%%", 100 * incr$incremental[incr$dimension == "Age"])` of the
+remaining variance and race
+`r sprintf("%.0f%%", 100 * incr$incremental[incr$dimension == "Race / ethnicity"])`;
+education `r sprintf("%.0f%%", 100 * incr$incremental[incr$dimension == "Education"])`,
+income `r sprintf("%.0f%%", 100 * incr$incremental[incr$dimension == "Income"])`,
+and sex essentially nothing. Age and race are doing different work, though. Age is
+a life-course pattern that every person passes through, so it is not a disparity
+in any policy sense. Race is a difference between people at the same point in
+life, and it is the one this analysis set out to measure. Among the dimensions
+that constitute disparities, race is first, education second, income third.
+
+## Forecasting to 2030 {#sec-forecast}
+
+Fourteen annual observations is a short series for ARIMA. Rather than lean on one
+method, every series below is fitted twice, once with `auto.arima` and once with an
+ordinary linear trend, and both are shown. Where the two disagree, the
+disagreement is the honest measure of how much the horizon is worth.
+
+```{r forecast-fn}
+H <- 6; START <- 2011
+forecast_series <- function(values, start_year = START, h = H, label) {
+  ts_obj <- ts(values, start = start_year, frequency = 1)
+  fit_a <- auto.arima(ts_obj, seasonal = FALSE, stepwise = FALSE,
+                      approximation = FALSE, allowdrift = TRUE)
+  fc_a  <- forecast(fit_a, h = h, level = 95)
+  df <- tibble(year = start_year:(start_year + length(values) - 1), y = values)
+  fit_l <- lm(y ~ year, data = df)
+  newd <- tibble(year = (max(df$year) + 1):(max(df$year) + h))
+  pr <- predict(fit_l, newdata = newd, interval = "prediction", level = 0.95)
+  bind_rows(
+    tibble(series = label, method = "ARIMA", year = as.numeric(time(fc_a$mean)),
+           estimate = as.numeric(fc_a$mean), lo = as.numeric(fc_a$lower[, 1]),
+           hi = as.numeric(fc_a$upper[, 1])),
+    tibble(series = label, method = "Linear trend", year = newd$year,
+           estimate = pr[, "fit"], lo = pr[, "lwr"], hi = pr[, "upr"])
+  ) |> mutate(arima_label = as.character(fit_a))
+}
+```
+
+### The national forecast
+
+```{r fig-forecast-national}
+#| label: fig-forecast-national
+#| fig-cap: "National adult obesity projected to 2030. Source: CDC BRFSS. Fourteen annual observations; treat the interval, not the point estimate, as the forecast."
+#| fig-height: 5.65
+fc_nat <- forecast_series(nat_total$obesity_rate, label = "National total")
+
+g <- ggplot() +
+  geom_ribbon(data = fc_nat, aes(year, ymin = lo, ymax = hi, fill = method), alpha = 0.16) +
+  geom_line(data = nat_total, aes(year, obesity_rate, colour = "Observed", group = 1,
+       text = sprintf("<b>%d observed</b><br>%.1f%%<br>95%% CI %.1f to %.1f",
+                      year, obesity_rate, ci_low, ci_high)), linewidth = 1) +
+  geom_point(data = nat_total, aes(year, obesity_rate, colour = "Observed",
+       text = sprintf("<b>%d observed</b><br>%.1f%%<br>95%% CI %.1f to %.1f",
+                      year, obesity_rate, ci_low, ci_high)), size = 1.6) +
+  geom_line(data = fc_nat, aes(year, estimate, colour = method, group = method,
+       text = sprintf("<b>%d, %s forecast</b><br>%.1f%%<br>95%% interval %.1f to %.1f",
+                      year, method, estimate, lo, hi)), linewidth = 0.95) +
+  geom_point(data = fc_nat, aes(year, estimate, colour = method,
+       text = sprintf("<b>%d, %s forecast</b><br>%.1f%%<br>95%% interval %.1f to %.1f",
+                      year, method, estimate, lo, hi)), size = 1.5) +
+  scale_colour_manual(values = c("Observed" = INK_PRIMARY, "ARIMA" = PAL_CAT[1],
+                                 "Linear trend" = PAL_CAT[2])) +
+  scale_fill_manual(values = PAL_CAT[1:2], guide = "none") +
+  scale_x_continuous(breaks = seq(2011, 2030, 3)) + pct_axis() +
+  labs(title = "National adult obesity, projected to 2030",
+       subtitle = "Black line is observed BRFSS data; bands are 95% prediction intervals from two independent methods",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+`auto.arima` selects `r unique(fc_nat$arima_label)`, which is a random walk with
+drift: the best description of the series is that each year adds a constant to the
+last. The two methods put 2030 national prevalence at
+`r sprintf("%.1f%%", fc_nat$estimate[fc_nat$year == 2030 & fc_nat$method == "ARIMA"])`
+and
+`r sprintf("%.1f%%", fc_nat$estimate[fc_nat$year == 2030 & fc_nat$method == "Linear trend"])`
+respectively, with intervals that overlap heavily. Roughly one in three American
+adults today; something closer to 36% by 2030 on current trajectory.
+
+### Group forecasts
+
+The income series is deliberately not forecast past 2020. A model fitted across
+the break documented in @sec-break would project the artefact forward as though it
+were a trend.
+
+```{r fig-forecast-race}
+#| label: fig-forecast-race
+#| fig-cap: "Race and ethnicity group forecasts to 2030. Source: CDC BRFSS national estimates. Income groups are excluded; see the note below."
+#| fig-height: 5.85
+race_groups <- c("Non-Hispanic Black", "Non-Hispanic Asian", "Non-Hispanic White", "Hispanic")
+race_hist <- national |> filter(strat_cat == "Race/Ethnicity", strat_label %in% race_groups) |>
+  mutate(strat_label = factor(strat_label, levels = race_groups)) |> arrange(strat_label, year)
+
+fc_race <- race_hist |> group_by(strat_label) |>
+  group_modify(~ forecast_series(.x$obesity_rate, label = as.character(.y$strat_label))) |>
+  ungroup() |> mutate(strat_label = factor(strat_label, levels = race_groups))
+
+g <- ggplot() +
+  geom_ribbon(data = filter(fc_race, method == "ARIMA"),
+              aes(year, ymin = lo, ymax = hi, fill = strat_label), alpha = 0.15) +
+  geom_line(data = race_hist, aes(year, obesity_rate, colour = strat_label,
+       group = strat_label,
+       text = sprintf("<b>%s</b><br>%d observed: %.1f%%", strat_label, year, obesity_rate)),
+       linewidth = 0.95) +
+  geom_line(data = filter(fc_race, method == "ARIMA"),
+       aes(year, estimate, colour = strat_label, group = strat_label,
+           text = sprintf("<b>%s</b><br>%d forecast: %.1f%%<br>95%% interval %.1f to %.1f",
+                          strat_label, year, estimate, lo, hi)),
+       linewidth = 0.95, linetype = "22") +
+  scale_colour_manual(values = PAL_CAT[c(1,4,3,2)]) +
+  scale_fill_manual(values = PAL_CAT[c(1,4,3,2)], guide = "none") +
+  scale_x_continuous(breaks = seq(2011, 2030, 3)) + pct_axis() +
+  labs(title = "Group forecasts to 2030: the top and the bottom do not converge",
+       subtitle = "Solid lines observed, dashed lines ARIMA central forecast, shaded 95% prediction intervals",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+### The gap projection
+
+The gaps are forecast directly as series rather than as the difference of two
+separate forecasts. Differencing two forecasts would require an assumption about
+how their errors correlate; forecasting the gap itself does not.
+
+```{r fig-forecast-gaps}
+#| label: fig-forecast-gaps
+#| fig-cap: "Gap projections to 2030. Source: CDC BRFSS national estimates; dashed lines are ARIMA central forecasts."
+#| fig-height: 5.65
+gap_race <- gaps |> filter(dimension == "Race / ethnicity") |> arrange(year)
+gap_edu  <- gaps |> filter(dimension == "Education") |> arrange(year)
+fc_gap <- bind_rows(forecast_series(gap_race$gap, label = "Race / ethnicity gap"),
+                    forecast_series(gap_edu$gap,  label = "Education gap"))
+gap_hist <- bind_rows(transmute(gap_race, year, gap, series = "Race / ethnicity gap"),
+                      transmute(gap_edu,  year, gap, series = "Education gap"))
+
+g <- ggplot() +
+  geom_ribbon(data = filter(fc_gap, method == "ARIMA"),
+              aes(year, ymin = lo, ymax = hi, fill = series), alpha = 0.15) +
+  geom_line(data = gap_hist, aes(year, gap, colour = series, group = series,
+       text = sprintf("<b>%s</b><br>%d observed: %.1f pp", series, year, gap)),
+       linewidth = 0.95) +
+  geom_line(data = filter(fc_gap, method == "ARIMA"),
+       aes(year, estimate, colour = series, group = series,
+           text = sprintf("<b>%s</b><br>%d forecast: %.1f pp<br>95%% interval %.1f to %.1f",
+                          series, year, estimate, lo, hi)),
+       linewidth = 0.95, linetype = "22") +
+  scale_colour_manual(values = PAL_CAT[c(2,1)]) +
+  scale_fill_manual(values = PAL_CAT[c(2,1)], guide = "none") +
+  scale_x_continuous(breaks = seq(2011, 2030, 3)) +
+  scale_y_continuous(labels = label_number(suffix = " pp"), limits = c(0, 40)) +
+  labs(title = "Neither gap is projected to close by 2030",
+       subtitle = "Gaps forecast directly as series, so the intervals need no assumption about correlated errors",
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+```{r forecast-summary}
+fc_summary <- bind_rows(fc_nat, fc_gap, fc_race) |>
+  filter(year %in% c(2027, 2030)) |>
+  transmute(Series = series, Method = method, Year = year,
+            Estimate = round(estimate, 1), Low = round(lo, 1), High = round(hi, 1)) |>
+  arrange(Series, Method, Year)
+tbl(fc_summary, caption = "Forecast summary for 2027 and 2030")
+```
+
+For both gaps `auto.arima` selects a model with no trend term, so the central
+forecast is a flat line at the historical mean and the prediction interval is the
+historical variability. The linear trend model, which is free to move, projects
+the race gap slightly *upward* to
+`r sprintf("%.1f", fc_gap$estimate[fc_gap$series == "Race / ethnicity gap" & fc_gap$method == "Linear trend" & fc_gap$year == 2030])`
+points by 2030. Neither method produces a scenario in which the gap closes.
+
+### How much the break costs the forecast
+
+```{r income-forecast-cost}
+fc_inc_full <- forecast_series(gap_inc$gap, label = "Income gap, full 2011-2024 series")
+fc_inc_pre  <- forecast_series(gap_inc$gap[gap_inc$year <= 2020], h = 10,
+                               label = "Income gap, 2011-2020 only")
+tbl(bind_rows(fc_inc_full, fc_inc_pre) |>
+      filter(year == 2030, method == "ARIMA") |>
+      transmute(Series = series, `2030 estimate` = round(estimate, 1),
+                Low = round(lo, 1), High = round(hi, 1)),
+    caption = "The same forecast, fitted across the break and inside it")
+```
+
+Fitted across the break, the 2030 income gap comes out at 2.7 points with a
+prediction interval whose lower bound is negative. A gap defined as a maximum
+minus a minimum cannot be negative, so the interval is telling you the model does
+not fit. Fitted on the pre-break window alone, the same procedure gives 9.5
+points. The two answers differ by a factor of three and only one of them comes
+from a model whose assumptions the data supports.
+
+### A backtest
+
+```{r backtest}
+backtest <- function(values, label) {
+  n <- length(values); k <- 3
+  te <- values[(n - k + 1):n]
+  forecast_series(values[1:(n - k)], h = k, label = label) |>
+    group_by(Method = method) |>
+    summarise(MAE = round(mean(abs(estimate - te)), 2),
+              RMSE = round(sqrt(mean((estimate - te)^2)), 2), .groups = "drop") |>
+    mutate(Series = label)
+}
+tbl(bind_rows(backtest(nat_total$obesity_rate, "National total"),
+              backtest(gap_race$gap, "Race / ethnicity gap"),
+              backtest(gap_edu$gap, "Education gap")) |>
+      select(Series, Method, MAE, RMSE),
+    caption = "Holding out the last three years: how the two methods would have done")
+```
+
+The linear trend beats ARIMA on every series. With fourteen observations, the
+model selection machinery in `auto.arima` has very little to work with, and the
+simpler method wins. Where the two disagree in the tables above, the linear trend
+has the better track record on this data.
+
+## Clustering states into disparity profiles {#sec-cluster}
+
+The outline lists region as a clustering feature. It is used here to *validate*
+the clusters rather than to build them. k-means minimises Euclidean distance, and
+a one-hot region column would contribute an arbitrary distance of root two between
+any two regions, a quantity with no meaning. Building the clusters from continuous
+features only and then asking whether they line up with geography is both cleaner
+and a genuine test of whether they mean anything.
+
+```{r cluster-features}
+RECENT <- 2022:2024   # one instrument regime, so the income gap is comparable
+BIG3 <- c("Non-Hispanic White", "Non-Hispanic Black", "Hispanic")
+
+overall <- analysis |> filter(strat_cat == "Total", year %in% RECENT) |>
+  group_by(state_abbr, state, region) |>
+  summarise(obesity = mean(obesity_rate), n_years = n(), .groups = "drop") |>
+  filter(n_years == length(RECENT))
+
+trend <- analysis |> filter(strat_cat == "Total") |> group_by(state_abbr) |>
+  filter(n() >= 10) |> summarise(trend_pp = coef(lm(obesity_rate ~ year))[2], .groups = "drop")
+
+income_gap <- analysis |>
+  filter(strat_cat == "Income", !is.na(income_midpoint), year %in% RECENT) |>
+  group_by(state_abbr, year) |> filter(n() == 6) |>
+  summarise(gap = max(obesity_rate) - min(obesity_rate), .groups = "drop") |>
+  group_by(state_abbr) |> summarise(income_gap = mean(gap), .groups = "drop")
+
+race_gap <- analysis |>
+  filter(strat_cat == "Race/Ethnicity", strat_label %in% BIG3, year %in% RECENT) |>
+  group_by(state_abbr, year) |> filter(n() == 3) |>
+  summarise(gap = max(obesity_rate) - min(obesity_rate), .groups = "drop") |>
+  group_by(state_abbr) |> summarise(race_gap = mean(gap), n_yr = n(), .groups = "drop") |>
+  filter(n_yr >= 2) |> select(-n_yr)
+
+states <- overall |> inner_join(trend, by = "state_abbr") |>
+  inner_join(income_gap, by = "state_abbr") |> inner_join(race_gap, by = "state_abbr") |>
+  select(state_abbr, state, region, obesity, income_gap, race_gap, trend_pp)
+
+scaled <- scale(select(states, obesity, income_gap, race_gap, trend_pp))
+```
+
+`r nrow(states)` jurisdictions survive the coverage requirements. The ones that
+drop out do so because they lack a full three-group race read in at least two of
+the three recent years, and they are disproportionately states with small Black or
+Hispanic populations. That is a selection effect worth naming: this section
+describes disparity profiles among states diverse enough to have measurable ones.
+
+```{r fig-k-selection}
+#| label: fig-k-selection
+#| fig-cap: "Choosing the number of clusters."
+#| fig-height: 4.26
+ks <- 2:8; dmat <- dist(scaled)
+k_diag <- map_dfr(ks, function(k) {
+  km <- kmeans(scaled, centers = k, nstart = 100, iter.max = 200)
+  tibble(k = k, within_ss = km$tot.withinss,
+         silhouette = mean(silhouette(km$cluster, dmat)[, 3]), smallest = min(km$size))
+})
+# Silhouette alone picks a solution containing a one-state cluster, which labels
+# an outlier rather than describing a profile. Require at least three states.
+k_best <- k_diag |> filter(smallest >= 3) |> slice_max(silhouette, n = 1) |> pull(k)
+
+g <- ggplot(k_diag |> select(k, within_ss, silhouette, smallest) |>
+         pivot_longer(c(within_ss, silhouette), names_to = "metric", values_to = "value") |>
+         mutate(metric = factor(recode(metric,
+                  within_ss = "Total within-cluster sum of squares",
+                  silhouette = "Mean silhouette width"),
+                levels = c("Total within-cluster sum of squares", "Mean silhouette width"))),
+       aes(k, value, group = 1,
+           text = sprintf("<b>k = %d</b><br>%s: %.3f<br>Smallest cluster: %d states",
+                          k, metric, value, smallest))) +
+  geom_line(colour = PAL_CAT[1], linewidth = 0.9) + geom_point(colour = PAL_CAT[1], size = 2.2) +
+  facet_wrap(~ metric, scales = "free_y") + scale_x_continuous(breaks = ks) +
+  labs(title = "The silhouette never rises far, so no k is strongly supported",
+       subtitle = paste0("Left, where adding a cluster stops buying much; right, how well separated the clusters are. Selected k = ", k_best),
+       x = "Number of clusters", y = NULL)
+
+gg_live(g, legend = FALSE)
+```
+
+The silhouette width never exceeds
+`r sprintf("%.2f", max(k_diag$silhouette))` at any k tried. That is a weak result
+and it is the honest headline of this section: **states lie on a continuum of
+disparity profiles rather than falling into distinct types.** A silhouette in this
+range means the clusters are convenient labels, not discovered structure. Reporting
+them as discovered types would be the mistake this section is designed to avoid.
+
+```{r cluster-fit}
+km <- kmeans(scaled, centers = k_best, nstart = 100, iter.max = 200)
+states$cluster <- factor(km$cluster)
+
+profile <- states |> group_by(cluster) |>
+  summarise(n = n(), obesity = mean(obesity), income_gap = mean(income_gap),
+            race_gap = mean(race_gap), trend_pp = mean(trend_pp), .groups = "drop") |>
+  arrange(desc(obesity))
+
+LADDER <- list(
+  obesity = list(`2` = c("Higher","Lower"), `3` = c("Highest","Middle","Lowest"),
+                 `4` = c("Highest","High","Lower","Lowest")),
+  gap = list(`2` = c("wider","narrower"), `3` = c("widest","middling","narrowest"),
+             `4` = c("widest","wide","narrow","narrowest")))
+label_clusters <- function(prof) {
+  k <- nrow(prof)
+  paste0(LADDER$obesity[[as.character(k)]][rank(-prof$obesity, ties.method = "first")],
+         " obesity, ",
+         LADDER$gap[[as.character(k)]][rank(-prof$race_gap, ties.method = "first")],
+         " race gap")
+}
+profile$label <- label_clusters(profile)
+states <- states |> left_join(select(profile, cluster, label), by = "cluster") |>
+  mutate(label = factor(label, levels = profile$label))
+
+tbl(profile |> transmute(Profile = label, States = n,
+                         `Obesity (%)` = round(obesity, 1),
+                         `Income gap (pp)` = round(income_gap, 1),
+                         `Race gap (pp)` = round(race_gap, 1),
+                         `Trend (pp/yr)` = round(trend_pp, 2)),
+    caption = "Cluster profiles")
+```
+
+```{r fig-clusters}
+#| label: fig-clusters
+#| fig-cap: "State disparity profiles. Source: CDC BRFSS, 2022-2024 averages. Clusters were built without any geographic input."
+#| fig-height: 6.58
+g <- ggplot(states, aes(race_gap, obesity, colour = label,
+       text = sprintf("<b>%s</b> (%s)<br>Obesity %.1f%%<br>Race gap %.1f pp<br>Income gap %.1f pp<br>Trend %+.2f pp/yr<br>Profile: %s",
+                      state, region, obesity, race_gap, income_gap, trend_pp, label))) +
+  geom_point(size = 3, alpha = 0.85) +
+  geom_text(aes(label = state_abbr, text = NULL), size = 2.4, vjust = -1.15,
+            show.legend = FALSE, colour = INK_SECONDARY) +
+  scale_colour_manual(values = PAL_CAT[1:k_best]) +
+  scale_x_continuous(labels = label_number(suffix = " pp")) + pct_axis() +
+  labs(title = "State disparity profiles",
+       subtitle = paste0("k-means on overall rate, income gap, race gap and 14-year trend; k = ", k_best,
+                         ". Hover a state for all four features"),
+       x = "Race gap, widest minus narrowest of the three largest groups",
+       y = "Overall obesity rate")
+
+gg_live(g)
+```
+
+```{r fig-cluster-regions}
+#| label: fig-cluster-regions
+#| fig-cap: "Census region composition of each cluster. Source: CDC BRFSS. Region was excluded from the clustering features."
+#| fig-height: 4.5
+region_x <- states |> filter(region != "Territory") |> count(label, region) |>
+  group_by(label) |> mutate(share = 100 * n / sum(n)) |> ungroup()
+chisq <- suppressWarnings(chisq.test(table(
+  droplevels(states$region[states$region != "Territory"]),
+  states$label[states$region != "Territory"])))
+
+g <- ggplot(region_x, aes(share, fct_rev(label), fill = region,
+       text = sprintf("<b>%s</b><br>%s: %d states (%.0f%% of the cluster)",
+                      label, region, n, share))) +
+  geom_col(width = 0.62) + scale_fill_manual(values = PAL_CAT[1:4]) +
+  scale_x_continuous(labels = label_number(suffix = "%"), expand = expansion(mult = c(0, 0.02))) +
+  labs(title = "The clusters recover geography without being told about it",
+       subtitle = paste0("Census region composition of each cluster. Chi-squared test of independence: p = ",
+                         format.pval(chisq$p.value, digits = 3)),
+       x = NULL, y = NULL)
+
+gg_live(g)
+```
+
+Region was never given to the algorithm, yet the two clusters split along regional
+lines at p = `r format.pval(chisq$p.value, digits = 3)`. The higher-obesity,
+narrower-gap cluster is overwhelmingly Midwest and South; the lower-obesity,
+wider-gap cluster is Northeast and West. That is a real validation: whatever weak
+structure exists in these four features tracks something geographic, which is what
+you would expect if the drivers are food environment, urban density and state
+policy rather than anything the features name directly.
+
+```{r cluster-members}
+tbl(states |> group_by(Profile = label) |>
+      summarise(n = n(), Jurisdictions = paste(sort(state_abbr), collapse = ", "),
+                .groups = "drop"),
+    caption = "Cluster membership")
+```
+
+A finer split is worth showing, with the caveat attached rather than buried.
+
+```{r fig-clusters-k4}
+#| label: fig-clusters-k4
+#| fig-cap: "A four-way split, offered as description rather than as a finding. Source: CDC BRFSS, 2022-2024 averages."
+#| fig-height: 6.79
+km4 <- kmeans(scaled, centers = 4, nstart = 100, iter.max = 200)
+states$cluster4 <- factor(km4$cluster)
+profile4 <- states |> group_by(cluster4) |>
+  summarise(n = n(), obesity = mean(obesity), income_gap = mean(income_gap),
+            race_gap = mean(race_gap), trend_pp = mean(trend_pp), .groups = "drop") |>
+  arrange(desc(obesity))
+profile4$label4 <- label_clusters(rename(profile4, cluster = cluster4))
+states <- states |> left_join(select(profile4, cluster4, label4), by = "cluster4") |>
+  mutate(label4 = factor(label4, levels = profile4$label4))
+
+g <- ggplot(states, aes(race_gap, obesity, colour = label4,
+       text = sprintf("<b>%s</b> (%s)<br>Obesity %.1f%%<br>Race gap %.1f pp<br>Income gap %.1f pp<br>Trend %+.2f pp/yr<br>Profile: %s",
+                      state, region, obesity, race_gap, income_gap, trend_pp, label4))) +
+  geom_point(size = 3, alpha = 0.85) +
+  geom_text(aes(label = state_abbr, text = NULL), size = 2.4, vjust = -1.15,
+            show.legend = FALSE, colour = INK_SECONDARY) +
+  scale_colour_manual(values = PAL_CAT[1:4]) +
+  scale_x_continuous(labels = label_number(suffix = " pp")) + pct_axis() +
+  labs(title = "A four-way split, offered as description rather than as a finding",
+       subtitle = "Same features, k = 4. The silhouette barely improves on k = 2, so read these as labels on a continuum",
+       x = "Race gap, widest minus narrowest of the three largest groups",
+       y = "Overall obesity rate")
+
+gg_live(g)
+```
+
+```{r cluster4-table}
+tbl(profile4 |> transmute(Profile = label4, States = n,
+                          `Obesity (%)` = round(obesity, 1),
+                          `Income gap (pp)` = round(income_gap, 1),
+                          `Race gap (pp)` = round(race_gap, 1),
+                          `Trend (pp/yr)` = round(trend_pp, 2)),
+    caption = "The four-way profiles")
+```
+
+The four-way version separates two groups that a policymaker would treat
+differently. A high-obesity, narrow-gap state has a population-wide problem and
+should be reached with population-wide measures. A high-obesity, wide-gap state
+has a targeting problem, where the same total burden is distributed very unevenly
+and universal programmes will reach the wrong people first.
+
+## Discussion {#sec-discussion}
+
+**Race is the widest disparity and it is not moving.** At roughly 29 percentage
+points nationally, the race and ethnicity gap is three times the income gap and
+two and a half times the education gap, and fourteen years of data show no trend
+in it. @sec-importance and @sec-incremental agree from two different directions:
+of the dimensions that constitute a social disparity, race carries the most
+explanatory weight. The caveat in @sec-gaps stands, that the 29-point figure is
+driven by Asian adults at the low end and the gap among the three largest groups
+is closer to 10 points, and both numbers belong in any honest summary.
+
+**The income convergence is not real.** This is the finding an analysis could most
+easily get wrong. Read at face value, the income gap fell by 72% between 2011 and
+2024 and the natural conclusion is that income-based disparity in obesity has
+nearly disappeared. @sec-break shows that the 2021 BRFSS income question redesign
+moved twenty percentage points of respondents out of the top bracket, and that the
+top bracket's measured prevalence jumped 4.7 points in the same year as a
+consequence. Within a single instrument regime the gap is roughly flat. The
+diagnostic that caught this is simple and general: watch the composition of a
+stratification variable over time, and treat a large jump as an instrument change
+until proven otherwise.
+
+**Forecasts extend the trend but do not close the gaps.** National prevalence is
+projected to reach roughly 36% by 2030 on either method. Neither gap is projected
+to close. Both projections rest on fourteen observations and the backtest in
+@sec-forecast shows the simpler linear method outperforming ARIMA on this data, so
+the intervals rather than the point estimates are what should be quoted.
+
+**Ecological inference is the binding limitation.** Every result here concerns
+groups within states, not individuals. Nothing in this data can say what obesity
+prevalence is among low-income Black adults in Alabama, because @sec-structure's
+structural fact means the file never reports two demographic variables together.
+The apparent independence of income and race in @sec-importance may therefore
+reflect the data's structure rather than the world: income and race are correlated
+in the US population, and an analysis that cannot see them together cannot
+separate their effects. This is the single strongest argument for moving to BRFSS
+individual-level microdata for any follow-up.
+
+**The transformation assumptions are stated and tested.** The \$100,000 midpoint
+for the open-ended top income bracket and the 75-year midpoint for "65 or older"
+are estimates, not observations. @sec-sensitivity refits both relationships across
+a plausible range and no conclusion changes.
+
+**Other caveats.** BRFSS height and weight are self-reported, and self-reported
+BMI is known to understate obesity, so every level in this report is likely a
+floor rather than a point estimate. Suppression is concentrated in the smallest
+racial and ethnic groups, so state-level race results are systematically thinner
+for the groups where disparities may be largest. Survey mode and weighting shifted
+during 2020 and 2021. And state, income and race distributions are mutually
+confounded: a state-level association between race and obesity partly reflects
+which states particular populations live in.
+
+## Conclusion and recommendations {#sec-conclusion}
+
+The gap that matters most in US adult obesity is racial, it is about 29 percentage
+points wide, and it has not narrowed in fourteen years. The income gap, which a
+face-value reading would report as having nearly closed, has not closed either;
+the appearance of convergence is an artefact of a survey instrument change in 2021.
+Both models and both forecasting methods agree that current trajectories carry
+national prevalence to roughly 36% by 2030 with the gaps intact.
+
+Three practical implications follow.
+
+1. **Target by race and geography together, not by income alone.** Income is the
+   weakest of the three social dimensions measured here, explaining
+   `r sprintf("%.0f%%", 100 * incr$incremental[incr$dimension == "Income"])` of
+   within-stratum variance against
+   `r sprintf("%.0f%%", 100 * incr$incremental[incr$dimension == "Race / ethnicity"])`
+   for race. The state clusters in @sec-cluster separate places with a
+   population-wide problem from places with a distributional one, and those two
+   situations call for different programmes.
+2. **Treat the flat race gap as evidence that current approaches are not working
+   on it.** Fourteen years of rising prevalence with a constant gap means every
+   group is getting worse at roughly the same rate. Interventions that lift all
+   groups equally will not close it; only something that acts differentially will.
+3. **Fix the income series before using it for policy.** Any analysis of BRFSS
+   income trends spanning 2021 needs to handle the break explicitly. The
+   composition diagnostic in @sec-break takes about ten lines of code and should be
+   standard practice on any long survey panel.
+
+**Next steps.** Three extensions would materially strengthen this work. BRFSS
+individual-level microdata would remove the ecological inference limit and allow
+income and race to be modelled jointly, which is the question this data cannot
+answer. External predictors such as food access, healthcare access and physical
+activity infrastructure would move the analysis from description toward
+explanation; the same BRFSS release carries physical activity and nutrition
+questions that were not used here. And a county-level or census-tract analysis
+would replace the 55-jurisdiction geography with something fine enough to site an
+actual intervention.
+
+---
+
+**Data source.** Centers for Disease Control and Prevention, *Nutrition, Physical
+Activity, and Obesity - Behavioral Risk Factor Surveillance System*, accessed via
+[data.cdc.gov](https://data.cdc.gov/Nutrition-Physical-Activity-and-Obesity/Nutrition-Physical-Activity-and-Obesity-Behavioral/hn4x-zwk7/about_data).
