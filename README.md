@@ -29,3 +29,4 @@ existing `weston-nyabeze.github.io` repo:
   (adding a case-study subpage, a blog, dark/light toggle, etc.),
   just point it at this repo — the file structure is plain HTML/CSS,
   no framework to explain.
+  
