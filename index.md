@@ -21,7 +21,7 @@ I tracked fourteen years of CDC BRFSS data in **R** and **Quarto** to ask which 
 
 #### [Healthcare Operations & Performance Dashboard](https://github.com/weston-nyabeze/weston-nyabeze.github.io/tree/main/projects/healthcare-operations-dashboard)
 
-I built an interactive **Excel** dashboard from 55,500 patient records using **Power Query**, **Power Pivot**, **DAX** and PivotTables. It tracks admissions, billing, hospitals, doctors, length of stay and insurance provider performance, with slicers for exploring trends by year and month. Behind the single screen sits a star schema with a calendar dimension and a set of DAX measures for daily admission rates, emergency and long stay rates, and year over year change. Across $1.417 billion in billing and an average stay of 15.5 days, the data turned out to be strikingly even: the five insurers each carry between 19.7% and 20.3% of billing, and weekdays hold 71.6% of it, almost exactly their share of the calendar. [Explore the dashboard](/projects/healthcare-operations-dashboard/).
+I built an interactive **Excel** dashboard from 55,500 patient records using **Power Query**, **Power Pivot**, **DAX** and PivotTables. It tracks admissions, billing, hospitals, doctors, length of stay and insurance provider performance, with slicers for exploring trends by year and month. Behind the single screen sits a star schema with a calendar dimension and a set of DAX measures for daily admission rates, emergency and long stay rates, and year over year change. Across $1.417 billion in billing and an average stay of 15.5 days, the data turned out to be strikingly even: the five insurers each carry between 19.7% and 20.3% of billing, and weekdays hold 71.6% of it, almost exactly their share of the calendar. [Explore the dashboard](/projects/healthcare-operations-dashboard/README.html).
 
 ### My Projects
 
@@ -31,7 +31,7 @@ I built an interactive **Excel** dashboard from 55,500 patient records using **P
 
 [The Gap That Didn't Close: Income, Race and US Adult Obesity](/projects/obesity-disparity-analysis/obesity-disparity-analysis.html)
 
-[Healthcare Operations & Performance Dashboard](/projects/healthcare-operations-dashboard/)
+[Healthcare Operations & Performance Dashboard](/projects/healthcare-operations-dashboard/README.html)
 
 ### Resume
 
