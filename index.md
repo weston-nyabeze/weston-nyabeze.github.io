@@ -33,6 +33,12 @@ I built an interactive **Excel** dashboard from 55,500 patient records using **P
 
 [Healthcare Operations & Performance Dashboard](/projects/healthcare-operations-dashboard/README.html)
 
+### Videos & Blog
+
+[AI and My Skills Building Healthcare Dashboards](/media.html), a five minute walkthrough of how I built the healthcare dashboard
+
+[See all videos and posts](/media.html)
+
 ### Resume
 
 [Read my resume](/resume.html) · [Download the PDF](/files/Weston_Nyabeze_Resume.pdf)
