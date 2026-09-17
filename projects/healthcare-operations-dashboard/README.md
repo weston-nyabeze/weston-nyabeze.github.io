@@ -7,7 +7,7 @@ title: Healthcare Operations & Performance Dashboard | Weston T. Nyabeze
 
 **Tools:** Excel, Power Query, Power Pivot, DAX, PivotTables, PivotCharts, slicers
 
-[Download the workbook](healthcare_operations_dashboard.xlsx) · [Back to portfolio](/)
+[Download the workbook](Weston%20Nyabeze%20Excel%20Healthcare_Dashboard.xlsx) · [Back to portfolio](/)
 
 ![Healthcare Operations & Performance Dashboard, filtered to 2023](dashboard.png)
 
@@ -57,7 +57,7 @@ That evenness is a property of the synthetic source rather than a real hospital 
 
 ## Files
 
-- `healthcare_operations_dashboard.xlsx`: the full workbook, including the Power Query steps, data model, DAX measures, analysis sheet and dashboard
+- `Weston Nyabeze Excel Healthcare_Dashboard.xlsx`: the full workbook, including the Power Query steps, data model, DAX measures, analysis sheet and dashboard
 - `dashboard.png`: screenshot of the dashboard
 
 The workbook is best opened in desktop Excel for Windows, which fully supports Power Pivot. Excel for Mac and Excel for the web will open it and show the dashboard, but they cannot edit the data model or the DAX measures.
