@@ -9,6 +9,10 @@ title: Healthcare Operations & Performance Dashboard | Weston T. Nyabeze
 
 [Download the workbook](healthcare_operations_dashboard.xlsx) · [Back to portfolio](/)
 
+![Healthcare Operations & Performance Dashboard, filtered to 2023](dashboard.png)
+
+*The dashboard with the Year slicer set to 2023.*
+
 ## Overview
 
 I built an interactive Excel dashboard from 55,500 patient admission records covering May 2019 to May 2024. It tracks admissions, billing, hospitals, doctors, length of stay and insurance provider performance on a single screen, with Year and Month slicers so a reader can move from the five year picture to a single month in two clicks. The goal was to take a flat extract and turn it into something an operations lead could open on a Monday morning and read without touching a formula.
@@ -54,5 +58,6 @@ That evenness is a property of the synthetic source rather than a real hospital 
 ## Files
 
 - `healthcare_operations_dashboard.xlsx`: the full workbook, including the Power Query steps, data model, DAX measures, analysis sheet and dashboard
+- `dashboard.png`: screenshot of the dashboard
 
 The workbook is best opened in desktop Excel for Windows, which fully supports Power Pivot. Excel for Mac and Excel for the web will open it and show the dashboard, but they cannot edit the data model or the DAX measures.
