@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }}</title>
+  <meta name="description" content="Business analytics portfolio of Weston T. Nyabeze: healthcare and public data projects in R, Python and Excel.">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+  <style>
+    /* Home page layout. Colours and font come from the site's existing theme. */
+    :root { --blue:#267CB9; --ink:#222; --head:#494949; --text:#727272; --line:#e5e5e5; --soft:#f6f8fa; }
+    body.home { padding:0; margin:0; background:#fff; color:var(--text); font-size:14px; line-height:1.5; }
+    .home a { color:var(--blue); text-decoration:none; font-weight:400; }
+    .home a:hover { text-decoration:underline; }
+    .home h1, .home h2, .home h3, .home h5 { margin:0; }
+
+    .topbar { border-bottom:1px solid var(--line); }
+    .topbar-in { max-width:1180px; margin:0 auto; padding:18px 32px; display:flex; justify-content:space-between; align-items:center; gap:16px; }
+    .brand { font-weight:700; font-size:20px; color:var(--blue) !important; }
+    .tabs { display:flex; gap:28px; }
+    .tabs a { color:var(--head) !important; padding-bottom:18px; margin-bottom:-19px; border-bottom:2px solid transparent; }
+    .tabs a.on { color:var(--blue) !important; border-bottom-color:var(--blue); font-weight:600; }
+    .tabs a:hover { text-decoration:none; color:var(--blue) !important; }
+
+    .page { max-width:1180px; margin:0 auto; padding:40px 32px 48px; display:grid; grid-template-columns:260px 1fr; gap:56px; }
+
+    .side { align-self:start; position:sticky; top:24px; }
+    .photo { width:120px; height:120px; border-radius:50%; overflow:hidden; margin-bottom:16px; background:linear-gradient(135deg,#dfe8f0,#c7d6e3); display:flex; align-items:center; justify-content:center; color:#5d7a92; font-size:34px; font-weight:700; }
+    .photo img { width:100%; height:100%; object-fit:cover; display:block; }
+    .side .name { font-size:24px; font-weight:700; color:var(--blue); line-height:1.2; }
+    .side .role { color:var(--head); font-weight:600; margin:6px 0 10px; }
+    .side .bio { font-size:13.5px; margin:0; }
+    .side .loc { font-size:13px; margin:8px 0 0; }
+    .btns { display:flex; flex-direction:column; gap:8px; margin-top:20px; }
+    .btn { border:1px solid var(--line); border-radius:6px; padding:8px 12px; color:var(--head) !important; font-size:13.5px; display:flex; justify-content:space-between; }
+    .btn:hover { border-color:var(--blue); text-decoration:none !important; }
+    .btn.primary { background:var(--blue); border-color:var(--blue); color:#fff !important; }
+    .tools { margin-top:22px; }
+    .tools h5 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--head); margin-bottom:8px; }
+    .chips { display:flex; flex-wrap:wrap; gap:6px; }
+    .chip { font-size:12px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:2px 9px; color:var(--head); }
+
+    .main h1 { font-size:30px; color:var(--ink); line-height:1.2; }
+    .lede { font-size:15.5px; margin:8px 0 26px; max-width:640px; }
+    .sechead { display:flex; justify-content:space-between; align-items:baseline; margin:6px 0 14px; }
+    .sechead h2 { font-size:18px; color:var(--head); }
+    .sechead span, .sechead a { font-size:13px; }
+
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .card { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; display:flex; flex-direction:column; transition:border-color .15s, box-shadow .15s; }
+    .card:hover { border-color:#c9d8e4; box-shadow:0 4px 14px rgba(38,124,185,.08); }
+    .thumb { display:block; height:160px; background:var(--soft); border-bottom:1px solid var(--line); position:relative; overflow:hidden; }
+    .thumb img { width:100%; height:100%; object-fit:cover; object-position:top left; display:block; }
+    .tag { position:absolute; top:10px; left:10px; background:#fff; border:1px solid var(--line); border-radius:12px; font-size:11px; padding:1px 8px; color:var(--head); }
+    .card-body { padding:14px 16px 16px; display:flex; flex-direction:column; flex:1; }
+    .card-body h3 { font-size:15px; line-height:1.3; }
+    .card-body h3 a { color:var(--ink) !important; font-weight:700; }
+    .hook { margin:6px 0 12px; font-size:13.5px; flex:1; }
+    .stat { color:var(--blue); font-weight:700; }
+    .links { font-size:13px; display:flex; gap:16px; }
+
+    .section { margin-top:36px; }
+    .video { display:grid; grid-template-columns:300px 1fr; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    .vthumb { display:block; height:160px; position:relative; background:#1f2a33; }
+    .vthumb img { width:100%; height:100%; object-fit:cover; object-position:top left; opacity:.55; display:block; }
+    .play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:48px; height:48px; border-radius:50%; background:#fff; }
+    .play:after { content:""; position:absolute; left:19px; top:15px; border-left:14px solid var(--blue); border-top:9px solid transparent; border-bottom:9px solid transparent; }
+    .dur { position:absolute; right:8px; bottom:8px; background:rgba(0,0,0,.7); color:#fff; font-size:11px; padding:1px 6px; border-radius:4px; }
+    .vbody { padding:16px 20px; display:flex; flex-direction:column; justify-content:center; }
+    .vbody h3 { font-size:15px; color:var(--ink); }
+    .vbody p { font-size:13.5px; margin:6px 0 10px; }
+
+    .foot { border-top:1px solid var(--line); }
+    .foot-in { max-width:1180px; margin:0 auto; padding:16px 32px; font-size:12px; display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+    .foot-in .contact a { margin-left:16px; }
+
+    @media (max-width: 900px) {
+      .page { grid-template-columns:1fr; gap:32px; padding:28px 16px 40px; }
+      .side { position:static; }
+      .topbar-in { padding:14px 16px; flex-direction:column; align-items:flex-start; }
+      .tabs { gap:20px; flex-wrap:wrap; }
+      .tabs a { padding-bottom:6px; margin-bottom:0; }
+      .grid { grid-template-columns:1fr; }
+      .video { grid-template-columns:1fr; }
+      .foot-in { padding:16px; }
+    }
+  </style>
+</head>
+<body class="home">
+
+  <div class="topbar">
+    <div class="topbar-in">
+      <a class="brand" href="{{ '/' | relative_url }}">Weston T. Nyabeze</a>
+      <nav class="tabs">
+        <a class="on" href="#projects">Projects</a>
+        <a href="{{ '/media.html' | relative_url }}">Videos &amp; Blog</a>
+        <a href="{{ '/resume.html' | relative_url }}">Resume</a>
+        <a href="#contact">Contact</a>
+      </nav>
+    </div>
+  </div>
+
+  <div class="page">
+    <aside class="side">
+      <!-- Headshot: upload your photo to images/headshot.jpg and it will appear here. -->
+      <div class="photo"><img src="{{ '/images/headshot.jpg' | relative_url }}" alt="Weston T. Nyabeze" onerror="this.parentNode.textContent='WN';"></div>
+      <div class="name">Weston T. Nyabeze</div>
+      <div class="role">Business Analytics &amp; AI</div>
+      <p class="bio">MS candidate at Kogod School of Business, American University. Former financial planning consultant, now building analytics and automation tools.</p>
+      <p class="loc">Silver Spring, MD</p>
+      <div class="btns">
+        <a class="btn primary" href="{{ '/resume.html' | relative_url }}">View resume <span>→</span></a>
+        <a class="btn" href="https://www.linkedin.com/in/weston-t-nyabeze">LinkedIn <span>↗</span></a>
+        <a class="btn" href="https://github.com/weston-nyabeze">GitHub <span>↗</span></a>
+      </div>
+      <div class="tools">
+        <h5>Tools</h5>
+        <div class="chips">
+          <span class="chip">R</span><span class="chip">Python</span><span class="chip">Quarto</span>
+          <span class="chip">Excel</span><span class="chip">Power Query</span><span class="chip">Power Pivot</span>
+          <span class="chip">DAX</span><span class="chip">scikit-learn</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <h1>My Business Analytics Portfolio</h1>
+      <p class="lede">Healthcare and public data projects in R, Python and Excel, each ending in a decision someone could act on.</p>
+
+      <div class="sechead" id="projects"><h2>Projects</h2><span>4 projects</span></div>
+      <div class="grid">
+
+        <!-- Project card. To change the picture, replace images/thumbs/clinic-no-show.png -->
+        <article class="card">
+          <a class="thumb" href="{{ '/projects/clinic-no-show-analysis/clinic_no_show_analysis.html' | relative_url }}">
+            <img src="{{ '/images/thumbs/clinic-no-show.png' | relative_url }}" alt="Clinic no-show analysis preview">
+            <span class="tag">R · Quarto</span>
+          </a>
+          <div class="card-body">
+            <h3><a href="{{ '/projects/clinic-no-show-analysis/clinic_no_show_analysis.html' | relative_url }}">The Empty Chair: Clinic No-Show Analysis</a></h3>
+            <p class="hook">A <span class="stat">21.4%</span> no-show rate was costing <span class="stat">£206,896</span> a year. I priced it, predicted it and costed four fixes.</p>
+            <div class="links">
+              <a href="{{ '/projects/clinic-no-show-analysis/clinic_no_show_analysis.html' | relative_url }}">Read report</a>
+              <a href="https://github.com/weston-nyabeze/weston-nyabeze.github.io/tree/main/projects/clinic-no-show-analysis">Code</a>
+            </div>
+          </div>
+        </article>
+
+        <!-- Replace images/thumbs/chronic-disease.png -->
+        <article class="card">
+          <a class="thumb" href="{{ '/projects/chronic-disease-modelling/DMV_Chronic_Disease_Modelling_report.html' | relative_url }}">
+            <img src="{{ '/images/thumbs/chronic-disease.png' | relative_url }}" alt="Chronic disease modelling preview">
+            <span class="tag">Python</span>
+          </a>
+          <div class="card-body">
+            <h3><a href="{{ '/projects/chronic-disease-modelling/DMV_Chronic_Disease_Modelling_report.html' | relative_url }}">Modelling Chronic Disease Burden</a></h3>
+            <p class="hook">Six models across <span class="stat">1,473</span> DMV census tracts, and a placebo test showing most of the fit was not causal.</p>
+            <div class="links">
+              <a href="{{ '/projects/chronic-disease-modelling/DMV_Chronic_Disease_Modelling_report.html' | relative_url }}">Read report</a>
+              <a href="https://github.com/weston-nyabeze/weston-nyabeze.github.io/tree/main/projects/chronic-disease-modelling">Code</a>
+            </div>
+          </div>
+        </article>
+
+        <!-- Replace images/thumbs/obesity-disparity.png -->
+        <article class="card">
+          <a class="thumb" href="{{ '/projects/obesity-disparity-analysis/obesity-disparity-analysis.html' | relative_url }}">
+            <img src="{{ '/images/thumbs/obesity-disparity.png' | relative_url }}" alt="Obesity disparity analysis preview">
+            <span class="tag">R · Quarto</span>
+          </a>
+          <div class="card-body">
+            <h3><a href="{{ '/projects/obesity-disparity-analysis/obesity-disparity-analysis.html' | relative_url }}">The Gap That Didn't Close</a></h3>
+            <p class="hook">The income gap in US obesity looked like it shrank from <span class="stat">9.5</span> to <span class="stat">2.7</span> points. It was a survey change.</p>
+            <div class="links">
+              <a href="{{ '/projects/obesity-disparity-analysis/obesity-disparity-analysis.html' | relative_url }}">Read report</a>
+              <a href="https://github.com/weston-nyabeze/weston-nyabeze.github.io/tree/main/projects/obesity-disparity-analysis">Code</a>
+            </div>
+          </div>
+        </article>
+
+        <!-- Replace images/thumbs/healthcare-dashboard.png -->
+        <article class="card">
+          <a class="thumb" href="{{ '/projects/healthcare-operations-dashboard/README.html' | relative_url }}">
+            <img src="{{ '/images/thumbs/healthcare-dashboard.png' | relative_url }}" alt="Healthcare operations dashboard preview">
+            <span class="tag">Excel · DAX</span>
+          </a>
+          <div class="card-body">
+            <h3><a href="{{ '/projects/healthcare-operations-dashboard/README.html' | relative_url }}">Healthcare Operations Dashboard</a></h3>
+            <p class="hook"><span class="stat">55,500</span> admissions and <span class="stat">$1.4B</span> in billing on one interactive Excel screen.</p>
+            <div class="links">
+              <a href="{{ '/projects/healthcare-operations-dashboard/README.html' | relative_url }}">View dashboard</a>
+              <a href="{{ '/media.html' | relative_url }}">Watch video</a>
+            </div>
+          </div>
+        </article>
+
+      </div>
+
+      <div class="section">
+        <div class="sechead"><h2>Videos &amp; Blog</h2><a href="{{ '/media.html' | relative_url }}">See all →</a></div>
+        <!-- Replace images/thumbs/video-healthcare-dashboard.png -->
+        <article class="video">
+          <a class="vthumb" href="{{ '/media.html' | relative_url }}">
+            <img src="{{ '/images/thumbs/video-healthcare-dashboard.png' | relative_url }}" alt="Video preview">
+            <span class="play"></span><span class="dur">4:51</span>
+          </a>
+          <div class="vbody">
+            <h3>AI and My Skills Building Healthcare Dashboards</h3>
+            <p>What an AI add-in could build on its own, and what I had to build by hand to get a working data model.</p>
+            <a href="{{ '/media.html' | relative_url }}">Watch the walkthrough</a>
+          </div>
+        </article>
+      </div>
+    </main>
+  </div>
+
+  <div class="foot" id="contact">
+    <div class="foot-in">
+      <span>© {{ site.time | date: '%Y' }} Weston T. Nyabeze</span>
+      <span class="contact">Get in touch:
+        <a href="https://www.linkedin.com/in/weston-t-nyabeze">LinkedIn</a>
+        <a href="https://github.com/weston-nyabeze">GitHub</a>
+      </span>
+    </div>
+  </div>
+
+</body>
+</html>
