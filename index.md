@@ -19,6 +19,10 @@ I modelled chronic disease burden across the 1,473 census tracts of the Washingt
 
 I tracked fourteen years of CDC BRFSS data in **R** and **Quarto** to ask which social gaps in adult obesity are actually closing. National prevalence rose from 27.4% to 33.1%, and two independent forecasting methods put 2030 near 36%. The income gap looked like it collapsed, from 9.5 points to 2.7, but a composition check traced that to BRFSS replacing its income question in 2021: the top bracket's share of respondents fell from 31.6% to 11.6% in a single year while unreported income rose from 16.1% to 38.5%. Within one instrument regime the gap is flat. Race, not income, is the strongest social predictor across a linear model, a random forest and gradient boosting, and neither the race gap nor the education gap is projected to close by 2030. [Read the report](/projects/obesity-disparity-analysis/obesity-disparity-analysis.html).
 
+#### [Healthcare Operations & Performance Dashboard](https://github.com/weston-nyabeze/weston-nyabeze.github.io/tree/main/projects/healthcare-operations-dashboard)
+
+I built an interactive **Excel** dashboard from 55,500 patient records using **Power Query**, **Power Pivot**, **DAX** and PivotTables. It tracks admissions, billing, hospitals, doctors, length of stay and insurance provider performance, with slicers for exploring trends by year and month. Behind the single screen sits a star schema with a calendar dimension and a set of DAX measures for daily admission rates, emergency and long stay rates, and year over year change. Across $1.417 billion in billing and an average stay of 15.5 days, the data turned out to be strikingly even: the five insurers each carry between 19.7% and 20.3% of billing, and weekdays hold 71.6% of it, almost exactly their share of the calendar. [Explore the dashboard](/projects/healthcare-operations-dashboard/).
+
 ### My Projects
 
 [The Empty Chair: Clinic No-Show Analysis](/projects/clinic-no-show-analysis/clinic_no_show_analysis.html)
@@ -26,6 +30,8 @@ I tracked fourteen years of CDC BRFSS data in **R** and **Quarto** to ask which 
 [Modelling Chronic Disease Burden from Area Level Determinants](/projects/chronic-disease-modelling/DMV_Chronic_Disease_Modelling_report.html)
 
 [The Gap That Didn't Close: Income, Race and US Adult Obesity](/projects/obesity-disparity-analysis/obesity-disparity-analysis.html)
+
+[Healthcare Operations & Performance Dashboard](/projects/healthcare-operations-dashboard/)
 
 ### Resume
 
