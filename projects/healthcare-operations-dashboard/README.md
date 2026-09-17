@@ -13,6 +13,14 @@ title: Healthcare Operations & Performance Dashboard | Weston T. Nyabeze
 
 *The dashboard with the Year slicer set to 2023.*
 
+### Video walkthrough
+
+<div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; margin: 1em 0;">
+  <iframe src="https://www.loom.com/embed/d8d673564d9c4f57b95e79dbf9c5b5ca" title="AI and My Skills Building Healthcare Dashboards" frameborder="0" allowfullscreen style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></iframe>
+</div>
+
+A five minute walkthrough comparing an AI-generated first draft with the finished dashboard. [Watch on Loom](https://www.loom.com/share/d8d673564d9c4f57b95e79dbf9c5b5ca)
+
 ## Overview
 
 I built an interactive Excel dashboard from 55,500 patient admission records covering May 2019 to May 2024. It tracks admissions, billing, hospitals, doctors, length of stay and insurance provider performance on a single screen, with Year and Month slicers so a reader can move from the five year picture to a single month in two clicks. The goal was to take a flat extract and turn it into something an operations lead could open on a Monday morning and read without touching a formula.
